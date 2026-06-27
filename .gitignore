@@ -1,0 +1,41 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Coverage output
+coverage.out
+coverage.html
+
+# Build artifacts
+dist/
+
+# Go workspace files
+go.work
+go.work.sum
+
+# Vendor directory
+vendor/
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# GoReleaser
+dist/
+
+# Trivy results
+trivy-results.sarif
+sbom.spdx.json

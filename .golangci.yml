@@ -1,0 +1,67 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    gofmt:
+      simplify: true
+
+linters:
+  default: none
+  enable:
+    - govet
+    - errcheck
+    - staticcheck
+    - ineffassign
+    - unused
+    - gosec
+    - revive
+    - exhaustive
+    - noctx
+    - bodyclose
+    - contextcheck
+    - cyclop
+    - dupl
+    - funlen
+    - gocognit
+    - gocritic
+    - godot
+    - mnd
+    - lll
+    - misspell
+    - nlreturn
+    - nolintlint
+    - prealloc
+    - rowserrcheck
+    - sqlclosecheck
+    - tparallel
+    - unconvert
+    - unparam
+    - wastedassign
+    - whitespace
+  settings:
+    lll:
+      line-length: 140
+    funlen:
+      lines: 120
+      statements: 60
+    cyclop:
+      max-complexity: 15
+    mnd:
+      ignored-functions:
+        - "time.Duration"
+        - "make"
+        - "fmt.Sprintf"
+        - "float64"
+        - "float32"
+        - "v.SetDefault"
+        - "time.NewTicker"
+    revive:
+      rules:
+        - name: exported
+          disabled: true

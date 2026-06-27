@@ -1,0 +1,33 @@
+version: 2
+
+project_name: nyro
+
+before:
+  hooks:
+    - go mod tidy
+
+# nyro is a Go library — no binary artifacts are produced.
+# A source archive is published with the GitHub release.
+builds: []
+
+source:
+  enabled: true
+  name_template: "{{ .ProjectName }}-{{ .Version }}"
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+      - "Merge pull request"
+      - "Merge branch"
+
+release:
+  github:
+    owner: vinaycharlie01
+    name: nyro

@@ -1,0 +1,4 @@
+# Mage config for the goreleaser mage package.
+# Loaded by magefile.go init() and used by mage release / mage snapshot.
+config: .goreleaser.yaml
+clean: true
