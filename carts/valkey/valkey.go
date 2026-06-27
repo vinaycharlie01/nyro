@@ -22,7 +22,7 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/valkey-io/valkey-go"
-	store "github.com/vinaycharlie01/nyro/stores"
+	store "github.com/vinaycharlie01/nyro/carts"
 )
 
 const (
@@ -48,7 +48,6 @@ const (
 
 // ValkeyStoreConfig holds configuration for Valkey store
 type ValkeyStoreConfig struct {
-	// Lock configuration for distributed locking (cache stampede prevention)
 	LockTTL             time.Duration
 	LockMaxWait         time.Duration
 	LockInitialBackoff  time.Duration
@@ -69,7 +68,6 @@ func DefaultValkeyStoreConfig() *ValkeyStoreConfig {
 }
 
 // ValkeyStore implements the Store interface for Valkey.
-// Any cache backend implementing Store can be plugged into the framework.
 type ValkeyStore struct {
 	client valkey.Client
 	config *ValkeyStoreConfig
@@ -137,10 +135,8 @@ func (s *ValkeyStore) Get(ctx context.Context, key string) (any, error) {
 		return nil, fmt.Errorf("failed to convert result to string: %w", err)
 	}
 
-	// Deserialize JSON
 	var value any
 	if err := json.Unmarshal([]byte(str), &value); err != nil {
-		// If not JSON, return raw string
 		return str, nil
 	}
 	return value, nil
@@ -148,7 +144,6 @@ func (s *ValkeyStore) Get(ctx context.Context, key string) (any, error) {
 
 // Set stores a value in Valkey with expiration
 func (s *ValkeyStore) Set(ctx context.Context, key string, value any, expiration time.Duration) error {
-	// Serialize to JSON
 	data, err := json.Marshal(value)
 	if err != nil {
 		return fmt.Errorf("failed to marshal value: %w", err)
@@ -214,13 +209,11 @@ func (s *ValkeyStore) GetMulti(ctx context.Context, keys []string) (map[string]a
 
 		strVal := values[i]
 		if strVal == "" {
-			continue // Skip empty values (key not found)
+			continue
 		}
 
-		// Try to deserialize JSON
 		var value any
 		if err := json.Unmarshal([]byte(strVal), &value); err != nil {
-			// If not JSON, use raw string
 			resultMap[key] = strVal
 		} else {
 			resultMap[key] = value
@@ -236,8 +229,6 @@ func (s *ValkeyStore) SetMulti(ctx context.Context, items map[string]any, expira
 		return nil
 	}
 
-	// Valkey MSET doesn't support expiration, so we set each key individually
-	// This is not atomic but ensures expiration is set correctly
 	for key, value := range items {
 		if err := s.Set(ctx, key, value, expiration); err != nil {
 			return fmt.Errorf("failed to set key %s: %w", key, err)
@@ -295,7 +286,6 @@ func (s *ValkeyStore) AcquireLock(ctx context.Context, key string, ttl time.Dura
 	lockKey := getLockKey(key)
 	lockValue = generateLockValue()
 
-	// Use SET with NX and EX options - order matters: Nx() before ExSeconds()
 	cmd := s.client.B().Set().Key(lockKey).Value(lockValue).Nx().ExSeconds(int64(ttl.Seconds())).Build()
 	result := s.client.Do(ctx, cmd)
 
@@ -303,7 +293,6 @@ func (s *ValkeyStore) AcquireLock(ctx context.Context, key string, ttl time.Dura
 		return "", false, fmt.Errorf("failed to acquire lock: %w", err)
 	}
 
-	// Check if SET NX succeeded
 	str, err := result.ToString()
 	acquired = (err == nil && str == "OK")
 
@@ -314,7 +303,6 @@ func (s *ValkeyStore) AcquireLock(ctx context.Context, key string, ttl time.Dura
 func (s *ValkeyStore) ReleaseLock(ctx context.Context, key string, lockValue string) error {
 	lockKey := getLockKey(key)
 
-	// Use Lua script for atomic check-and-delete
 	cmd := s.client.B().Eval().Script(releaseLockScript).Numkeys(1).Key(lockKey).Arg(lockValue).Build()
 	result := s.client.Do(ctx, cmd)
 
@@ -354,7 +342,6 @@ func (s *ValkeyStore) ExtendLock(ctx context.Context, key string, lockValue stri
 
 // GetOrSetWithLock retrieves a value or sets it with distributed locking
 func (s *ValkeyStore) GetOrSetWithLock(ctx context.Context, key string, loader func(context.Context) (any, error), expiration time.Duration, lockTTL time.Duration) (any, error) {
-	// Fast path: cache hit
 	value, err := s.Get(ctx, key)
 	if err == nil {
 		return value, nil
@@ -365,7 +352,6 @@ func (s *ValkeyStore) GetOrSetWithLock(ctx context.Context, key string, loader f
 		return nil, fmt.Errorf("cache get error: %w", err)
 	}
 
-	// Cache miss
 	if lockTTL == 0 {
 		lockTTL = s.config.LockTTL
 	}
@@ -375,12 +361,10 @@ func (s *ValkeyStore) GetOrSetWithLock(ctx context.Context, key string, loader f
 		return nil, fmt.Errorf("lock acquisition failed: %w", err)
 	}
 
-	// Another process owns the lock
 	if !acquired {
 		return s.waitForCache(ctx, key)
 	}
 
-	// We own the lock
 	defer func() {
 		releaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -390,7 +374,6 @@ func (s *ValkeyStore) GetOrSetWithLock(ctx context.Context, key string, loader f
 		}
 	}()
 
-	// Double-check cache after acquiring lock
 	value, err = s.Get(ctx, key)
 	if err == nil {
 		return value, nil
@@ -401,7 +384,6 @@ func (s *ValkeyStore) GetOrSetWithLock(ctx context.Context, key string, loader f
 		return nil, fmt.Errorf("cache get error during double-check: %w", err)
 	}
 
-	// Heartbeat for long-running loaders
 	renewalInterval := s.config.LockRenewalInterval
 	if renewalInterval <= 0 {
 		renewalInterval = lockTTL / 3
@@ -410,7 +392,6 @@ func (s *ValkeyStore) GetOrSetWithLock(ctx context.Context, key string, loader f
 	heartbeatCtx, cancelHeartbeat := context.WithCancel(ctx)
 	go s.startLockHeartbeat(heartbeatCtx, key, lockValue, lockTTL, renewalInterval)
 
-	// Execute loader
 	result, err := loader(ctx)
 	cancelHeartbeat()
 
@@ -422,7 +403,6 @@ func (s *ValkeyStore) GetOrSetWithLock(ctx context.Context, key string, loader f
 		return nil, errors.New("loader returned nil result")
 	}
 
-	// Cache population
 	if err := s.Set(ctx, key, result, expiration); err != nil {
 		slogger.Error("failed to set cache after loading", "key", key, "error", err)
 	}
