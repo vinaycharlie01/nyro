@@ -120,25 +120,3 @@ func TestKeyToString(t *testing.T) {
 		})
 	}
 }
-
-func TestZeroValue(t *testing.T) {
-	t.Run("string", func(t *testing.T) {
-		got := ZeroValue[string]()
-		assert.Equal(t, "", got)
-	})
-
-	t.Run("int", func(t *testing.T) {
-		got := ZeroValue[int]()
-		assert.Equal(t, 0, got)
-	})
-
-	t.Run("bool", func(t *testing.T) {
-		got := ZeroValue[bool]()
-		assert.Equal(t, false, got)
-	})
-
-	t.Run("pointer", func(t *testing.T) {
-		got := ZeroValue[*string]()
-		assert.Nil(t, got)
-	})
-}

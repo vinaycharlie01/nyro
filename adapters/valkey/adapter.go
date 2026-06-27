@@ -26,6 +26,21 @@ import (
 	"github.com/vinaycharlie01/nyro/internal/keyutil"
 )
 
+const (
+	// DefaultAddr is the default Valkey server address.
+	DefaultAddr = "localhost:6380"
+	// DefaultDB is the default Valkey database number.
+	DefaultDB = 0
+	// DefaultTTL is the default time-to-live for cache entries.
+	DefaultTTL = 24 * time.Hour
+	// DefaultLockTTL is the default lock time-to-live for distributed locking.
+	DefaultLockTTL = 10 * time.Second
+
+	redisConnectTimeout = 5 * time.Second
+	defaultLockTTL      = 10 * time.Second
+	defaultTTLC         = 24 * time.Hour
+)
+
 func init() {
 	nyroconfig.Register(nyroconfig.CacheValkey, func(cfg nyroconfig.Config) (cache.Cache, error) {
 		vc, ok := cfg.(*nyroconfig.ValkeyConfig)
@@ -42,8 +57,6 @@ type Adapter struct {
 	store  *valkeystorepkg.ValkeyStore
 	config nyroconfig.ValkeyConfig
 }
-
-const redisConnectTimeout = 5 * time.Second
 
 // New creates a Valkey-backed cache.Cache.
 // It pings the server to verify connectivity before returning.
@@ -102,10 +115,6 @@ func (a *Adapter) Clear(ctx context.Context) error {
 func (a *Adapter) Exists(ctx context.Context, key any) (bool, error) {
 	return a.store.Exists(ctx, keyutil.ToString(key))
 }
-
-const (
-	defaultLockTTL = 10 * time.Second
-)
 
 func (a *Adapter) GetOrSet(
 	ctx context.Context,
@@ -201,10 +210,6 @@ func (a *Adapter) Close() error {
 
 	return a.store.Close()
 }
-
-const (
-	defaultTTLC = 24 * time.Hour
-)
 
 func effectiveTTL(requested, defaultTTL time.Duration) time.Duration {
 	if requested > 0 {

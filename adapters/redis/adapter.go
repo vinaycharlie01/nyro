@@ -26,6 +26,21 @@ import (
 	"github.com/vinaycharlie01/nyro/internal/keyutil"
 )
 
+const (
+	// DefaultAddr is the default Redis server address.
+	DefaultAddr = "localhost:6379"
+	// DefaultDB is the default Redis database number.
+	DefaultDB = 0
+	// DefaultTTL is the default time-to-live for cache entries.
+	DefaultTTL = 24 * time.Hour
+	// DefaultLockTTL is the default lock time-to-live for distributed locking.
+	DefaultLockTTL = 10 * time.Second
+
+	redisConnectTimeout = 5 * time.Second
+	lockTTLC            = 10 * time.Second
+	defaultTTL          = 24 * time.Hour
+)
+
 func init() {
 	nyroconfig.Register(nyroconfig.CacheRedis, func(cfg nyroconfig.Config) (cache.Cache, error) {
 		rc, ok := cfg.(*nyroconfig.RedisConfig)
@@ -42,8 +57,6 @@ type Adapter struct {
 	store  *redisstore.RedisCart
 	config nyroconfig.RedisConfig
 }
-
-const redisConnectTimeout = 5 * time.Second
 
 // New creates a Redis-backed cache.Cache.
 // It pings the server to verify connectivity before returning.
@@ -103,8 +116,6 @@ func (a *Adapter) Clear(ctx context.Context) error {
 func (a *Adapter) Exists(ctx context.Context, key any) (bool, error) {
 	return a.store.Exists(ctx, keyutil.ToString(key))
 }
-
-const lockTTLC = 10 * time.Second
 
 func (a *Adapter) GetOrSet(ctx context.Context, key any, loader func(context.Context) (any, error), opts ...cache.Option) (any, error) {
 	options := cache.ApplyOptions(opts...)
@@ -194,8 +205,6 @@ func (a *Adapter) Close() error {
 
 	return a.store.Close()
 }
-
-const defaultTTL = 24 * time.Hour
 
 // effectiveTTL returns the first non-zero duration, falling back to the default TTL.
 func effectiveTTL(requested, configured time.Duration) time.Duration {

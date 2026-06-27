@@ -2,6 +2,8 @@ package cache
 
 import (
 	"context"
+
+	pkgutil "github.com/vinaycharlie01/nyro/pkg"
 )
 
 // TypedCache provides a type-safe wrapper around the Cache interface using Go generics.
@@ -37,10 +39,10 @@ func NewTypedCache[T any](cache Cache) *TypedCache[T] {
 func (tc *TypedCache[T]) Get(ctx context.Context, key any) (T, error) {
 	result, err := tc.cache.Get(ctx, key)
 	if err != nil {
-		return zeroValue[T](), err
+		return ZeroValue[T](), err
 	}
 
-	return Decode[T](result)
+	return pkgutil.Decode[T](result)
 }
 
 // Set stores a typed value in cache.
@@ -73,10 +75,10 @@ func (tc *TypedCache[T]) GetOrSet(ctx context.Context, key any, loader func(cont
 
 	result, err := tc.cache.GetOrSet(ctx, key, wrappedLoader, opts...)
 	if err != nil {
-		return zeroValue[T](), err
+		return ZeroValue[T](), err
 	}
 
-	return Decode[T](result)
+	return pkgutil.Decode[T](result)
 }
 
 // GetMulti retrieves multiple values from cache with type conversion.
@@ -89,7 +91,7 @@ func (tc *TypedCache[T]) GetMulti(ctx context.Context, keys []any) (map[any]T, e
 
 	typedResults := make(map[any]T, len(results))
 	for key, value := range results {
-		decoded, err := Decode[T](value)
+		decoded, err := pkgutil.Decode[T](value)
 		if err != nil {
 			return nil, err
 		}
@@ -134,4 +136,10 @@ func (tc *TypedCache[T]) Close() error {
 // This is useful when you need to pass the cache to code that expects the base interface.
 func (tc *TypedCache[T]) Unwrap() Cache {
 	return tc.cache
+}
+
+// ZeroValue returns the zero value for type T.
+func ZeroValue[T any]() T {
+	var zero T
+	return zero
 }
