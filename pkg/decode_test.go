@@ -93,12 +93,11 @@ func TestDecodeError(t *testing.T) {
 		ID int `json:"id"`
 	}
 
-	// Test with invalid data that can't be unmarshaled
 	invalidData := map[string]any{
 		"id": "invalid_number",
 	}
 
 	_, err := cache.Decode[User](invalidData)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "invalid cached payload")
+	require.Contains(t, err.Error(), "cache: type mismatch in cached payload")
 }

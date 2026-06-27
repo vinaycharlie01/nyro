@@ -1,4 +1,4 @@
-package config
+package config_test
 
 import (
 	"testing"
@@ -7,6 +7,8 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	_ "github.com/vinaycharlie01/nyro/adapters/redis"
+	"github.com/vinaycharlie01/nyro/config"
 )
 
 func TestRedisConfig_LoadFromEnv(t *testing.T) {
@@ -15,7 +17,7 @@ func TestRedisConfig_LoadFromEnv(t *testing.T) {
 		t.Setenv("REDIS_DB", "1")
 		t.Setenv("REDIS_DEFAULT_TTL", "1h")
 
-		cfg := &RedisConfig{}
+		cfg := &config.RedisConfig{}
 		err := cfg.LoadFromEnv()
 
 		require.NoError(t, err)
@@ -25,7 +27,7 @@ func TestRedisConfig_LoadFromEnv(t *testing.T) {
 	})
 
 	t.Run("success_without_env_vars", func(t *testing.T) {
-		cfg := &RedisConfig{}
+		cfg := &config.RedisConfig{}
 		err := cfg.LoadFromEnv()
 
 		require.NoError(t, err)
@@ -36,7 +38,7 @@ func TestRedisConfig_LoadFromEnv(t *testing.T) {
 	t.Run("error_invalid_int", func(t *testing.T) {
 		t.Setenv("REDIS_DB", "invalid")
 
-		cfg := &RedisConfig{}
+		cfg := &config.RedisConfig{}
 		err := cfg.LoadFromEnv()
 
 		require.Error(t, err)
@@ -46,7 +48,7 @@ func TestRedisConfig_LoadFromEnv(t *testing.T) {
 	t.Run("error_invalid_duration", func(t *testing.T) {
 		t.Setenv("REDIS_DIAL_TIMEOUT", "invalid")
 
-		cfg := &RedisConfig{}
+		cfg := &config.RedisConfig{}
 		err := cfg.LoadFromEnv()
 
 		require.Error(t, err)
@@ -56,33 +58,32 @@ func TestRedisConfig_LoadFromEnv(t *testing.T) {
 
 func TestNew(t *testing.T) {
 	mockRedis := miniredis.RunT(t)
-	defer mockRedis.Close()
 
 	t.Run("success", func(t *testing.T) {
 		t.Setenv("REDIS_ADDR", mockRedis.Addr())
 
-		cache, err := New(CacheRedis, &RedisConfig{})
+		c, err := config.New(config.CacheRedis, &config.RedisConfig{})
 
 		require.NoError(t, err)
-		assert.NotNil(t, cache)
-		defer cache.Close()
+		assert.NotNil(t, c)
+		defer c.Close()
 	})
 
 	t.Run("error_unsupported_type", func(t *testing.T) {
-		cache, err := New(CacheType("invalid"), &RedisConfig{})
+		c, err := config.New(config.CacheType("invalid"), &config.RedisConfig{})
 
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "unsupported cache type")
-		assert.Nil(t, cache)
+		assert.Nil(t, c)
 	})
 
 	t.Run("error_config_load", func(t *testing.T) {
 		t.Setenv("REDIS_DB", "invalid")
 
-		cache, err := New(CacheRedis, &RedisConfig{})
+		c, err := config.New(config.CacheRedis, &config.RedisConfig{})
 
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to load config from env")
-		assert.Nil(t, cache)
+		assert.Nil(t, c)
 	})
 }
