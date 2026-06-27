@@ -13,22 +13,24 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 	redis "github.com/redis/go-redis/v9"
-	store "github.com/vinaycharlie01/nyro/carts"
+	cart "github.com/vinaycharlie01/nyro/carts"
 	"golang.org/x/sync/singleflight"
 )
 
 const (
-	// RedisType represents the storage type
+	// RedisType is the identifier for the Redis cart backend.
 	RedisType = "redis"
 
-	// Lock configuration defaults
 	defaultLockTTL            = 10 * time.Second
-	defaultLockMaxWait        = 3 * time.Second // Max time to wait for lock holder to finish
+	defaultLockMaxWait        = 3 * time.Second
 	defaultLockInitialBackoff = 50 * time.Millisecond
 	defaultLockMaxBackoff     = 500 * time.Millisecond
 	lockKeySuffix             = ":lock"
+	lockValueBytes            = 16
+	defaultLockMultiplier     = 2.0
+	lockRenewalDivisor        = 3
+	defaultReleaseLockTimeout = 5 * time.Second
 
-	// Lua script for safe lock release (only delete if value matches)
 	releaseLockScript = `
 		if redis.call("get", KEYS[1]) == ARGV[1] then
 			return redis.call("del", KEYS[1])
@@ -36,31 +38,44 @@ const (
 			return 0
 		end
 	`
+
+	extendLockScript = `
+		if redis.call("get", KEYS[1]) == ARGV[1] then
+			return redis.call("expire", KEYS[1], ARGV[2])
+		else
+			return 0
+		end
+	`
 )
 
-// RedisStoreConfig holds configuration for Redis store
-type RedisStoreConfig struct {
-	// Lock configuration for distributed locking (cache stampede prevention)
-	LockTTL             time.Duration // TTL for distributed locks (default: 10s)
-	LockMaxWait         time.Duration // Maximum time to wait for lock holder to finish (default: 3s)
-	LockInitialBackoff  time.Duration // Initial backoff interval (default: 50ms)
-	LockMaxBackoff      time.Duration // Maximum backoff interval (default: 500ms)
-	LockMultiplier      float64       // Backoff multiplier (default: 2.0)
-	LockRenewalInterval time.Duration // Interval for lock renewal heartbeat (default: LockTTL/3)
+// RedisCartConfig holds configuration for the Redis cart backend.
+type RedisCartConfig struct {
+	// LockTTL is the TTL for distributed locks (default: 10s).
+	LockTTL time.Duration
+	// LockMaxWait is the maximum time to wait for a lock holder to finish (default: 3s).
+	LockMaxWait time.Duration
+	// LockInitialBackoff is the initial backoff interval (default: 50ms).
+	LockInitialBackoff time.Duration
+	// LockMaxBackoff is the maximum backoff interval (default: 500ms).
+	LockMaxBackoff time.Duration
+	// LockMultiplier is the exponential backoff multiplier (default: 2.0).
+	LockMultiplier float64
+	// LockRenewalInterval is the heartbeat renewal interval (default: LockTTL/3).
+	LockRenewalInterval time.Duration
 }
 
-// DefaultRedisStoreConfig returns default configuration
-func DefaultRedisStoreConfig() *RedisStoreConfig {
-	return &RedisStoreConfig{
+// DefaultRedisCartConfig returns the default Redis cart configuration.
+func DefaultRedisCartConfig() *RedisCartConfig {
+	return &RedisCartConfig{
 		LockTTL:            defaultLockTTL,
 		LockMaxWait:        defaultLockMaxWait,
 		LockInitialBackoff: defaultLockInitialBackoff,
 		LockMaxBackoff:     defaultLockMaxBackoff,
-		LockMultiplier:     2.0,
+		LockMultiplier:     defaultLockMultiplier,
 	}
 }
 
-// RedisClientInterface abstracts redis client operations for testing
+// RedisClientInterface abstracts Redis client operations for testing.
 type RedisClientInterface interface {
 	Get(ctx context.Context, key string) *redis.StringCmd
 	Set(ctx context.Context, key string, value any, expiration time.Duration) *redis.StatusCmd
@@ -76,94 +91,81 @@ type RedisClientInterface interface {
 	Close() error
 }
 
-// RedisStore implements Store and DistributedLocker interfaces for Redis
-// Supports AWS Redis Cluster and handles high concurrency with distributed locking
-type RedisStore struct {
+// RedisCart implements cart.Cart and cart.DistributedLocker for Redis.
+// Compatible with AWS ElastiCache; prevents cache stampede via distributed locking.
+type RedisCart struct {
 	client RedisClientInterface
-	config *RedisStoreConfig
+	config *RedisCartConfig
 	group  singleflight.Group
 }
 
-// RedisStoreOption is a functional option for configuring RedisStore
-type RedisStoreOption func(*RedisStoreConfig)
+// RedisCartOption is a functional option for configuring RedisCart.
+type RedisCartOption func(*RedisCartConfig)
 
-// WithLockTTL sets the TTL for distributed locks
-func WithLockTTL(ttl time.Duration) RedisStoreOption {
-	return func(c *RedisStoreConfig) {
+// WithLockTTL sets the TTL for distributed locks.
+func WithLockTTL(ttl time.Duration) RedisCartOption {
+	return func(c *RedisCartConfig) {
 		c.LockTTL = ttl
 	}
 }
 
-// WithLockMaxWait sets the maximum time to wait for lock holder to finish
-func WithLockMaxWait(d time.Duration) RedisStoreOption {
-	return func(c *RedisStoreConfig) {
+// WithLockMaxWait sets the maximum time to wait for a lock holder to finish.
+func WithLockMaxWait(d time.Duration) RedisCartOption {
+	return func(c *RedisCartConfig) {
 		c.LockMaxWait = d
 	}
 }
 
-// WithLockBackoff sets the initial and maximum backoff intervals
-func WithLockBackoff(initial, max time.Duration) RedisStoreOption {
-	return func(c *RedisStoreConfig) {
+// WithLockBackoff sets the initial and maximum backoff intervals.
+func WithLockBackoff(initial, max time.Duration) RedisCartOption {
+	return func(c *RedisCartConfig) {
 		c.LockInitialBackoff = initial
 		c.LockMaxBackoff = max
 	}
 }
 
-// WithLockMultiplier sets the backoff multiplier
-func WithLockMultiplier(multiplier float64) RedisStoreOption {
-	return func(c *RedisStoreConfig) {
+// WithLockMultiplier sets the exponential backoff multiplier.
+func WithLockMultiplier(multiplier float64) RedisCartOption {
+	return func(c *RedisCartConfig) {
 		c.LockMultiplier = multiplier
 	}
 }
 
-// NewRedis creates a new Redis store instance
-// Compatible with AWS Redis Cluster
-//
-// Example:
-//
-//	// With default config
-//	store := redis.NewRedis(client)
-//
-//	// With custom lock configuration
-//	store := redis.NewRedis(client,
-//		redis.WithLockTTL(15*time.Second),
-//		redis.WithLockMaxElapsed(5*time.Second),
-//		redis.WithLockBackoff(100*time.Millisecond, 1*time.Second),
-//	)
-func NewRedis(client RedisClientInterface, opts ...RedisStoreOption) *RedisStore {
-	config := DefaultRedisStoreConfig()
+// NewRedis creates a new RedisCart instance.
+func NewRedis(client RedisClientInterface, opts ...RedisCartOption) *RedisCart {
+	cfg := DefaultRedisCartConfig()
+
 	for _, opt := range opts {
-		opt(config)
+		opt(cfg)
 	}
 
-	return &RedisStore{
+	return &RedisCart{
 		client: client,
-		config: config,
+		config: cfg,
 	}
 }
 
-// Get retrieves a value from Redis
-func (s *RedisStore) Get(ctx context.Context, key string) (any, error) {
+// Get retrieves a value from Redis.
+func (s *RedisCart) Get(ctx context.Context, key string) (any, error) {
 	result, err := s.client.Get(ctx, key).Result()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
-			return nil, store.NotFoundWithCause(err)
+			return nil, cart.NotFoundWithCause(err)
 		}
+
 		return nil, fmt.Errorf("redis get failed: %w", err)
 	}
 
-	// Deserialize JSON
 	var value any
 	if err := json.Unmarshal([]byte(result), &value); err != nil {
-		// If not JSON, return raw string
 		return result, nil
 	}
+
 	return value, nil
 }
 
-// Set stores a value in Redis with expiration
-func (s *RedisStore) Set(ctx context.Context, key string, value any, expiration time.Duration) error {
-	// Serialize to JSON for complex types
+// Set stores a value in Redis with the given expiration.
+func (s *RedisCart) Set(ctx context.Context, key string, value any, expiration time.Duration) error {
 	data, err := json.Marshal(value)
 	if err != nil {
 		return fmt.Errorf("failed to marshal value: %w", err)
@@ -176,25 +178,27 @@ func (s *RedisStore) Set(ctx context.Context, key string, value any, expiration 
 	return nil
 }
 
-// Delete removes a key from Redis
-func (s *RedisStore) Delete(ctx context.Context, key string) error {
+// Delete removes a key from Redis.
+func (s *RedisCart) Delete(ctx context.Context, key string) error {
 	if err := s.client.Del(ctx, key).Err(); err != nil {
 		return fmt.Errorf("redis delete failed: %w", err)
 	}
+
 	return nil
 }
 
-// Exists checks if a key exists in Redis
-func (s *RedisStore) Exists(ctx context.Context, key string) (bool, error) {
+// Exists checks if a key exists in Redis.
+func (s *RedisCart) Exists(ctx context.Context, key string) (bool, error) {
 	result, err := s.client.Exists(ctx, key).Result()
 	if err != nil {
 		return false, fmt.Errorf("redis exists failed: %w", err)
 	}
+
 	return result > 0, nil
 }
 
-// GetMulti retrieves multiple keys from Redis
-func (s *RedisStore) GetMulti(ctx context.Context, keys []string) (map[string]any, error) {
+// GetMulti retrieves multiple keys from Redis in a single MGet call.
+func (s *RedisCart) GetMulti(ctx context.Context, keys []string) (map[string]any, error) {
 	if len(keys) == 0 {
 		return make(map[string]any), nil
 	}
@@ -205,9 +209,10 @@ func (s *RedisStore) GetMulti(ctx context.Context, keys []string) (map[string]an
 	}
 
 	result := make(map[string]any, len(keys))
+
 	for i, key := range keys {
 		if values[i] == nil {
-			continue // Skip nil values (key not found)
+			continue
 		}
 
 		strVal, ok := values[i].(string)
@@ -215,10 +220,8 @@ func (s *RedisStore) GetMulti(ctx context.Context, keys []string) (map[string]an
 			continue
 		}
 
-		// Try to deserialize JSON
 		var value any
 		if err := json.Unmarshal([]byte(strVal), &value); err != nil {
-			// If not JSON, use raw string
 			result[key] = strVal
 		} else {
 			result[key] = value
@@ -228,32 +231,30 @@ func (s *RedisStore) GetMulti(ctx context.Context, keys []string) (map[string]an
 	return result, nil
 }
 
-// SetMulti sets multiple keys in Redis
-func (s *RedisStore) SetMulti(ctx context.Context, items map[string]any, expiration time.Duration) error {
+// SetMulti stores multiple key-value pairs in Redis using MSET.
+func (s *RedisCart) SetMulti(ctx context.Context, items map[string]any, expiration time.Duration) error {
 	if len(items) == 0 {
 		return nil
 	}
 
-	// Build MSET arguments
 	args := make([]any, 0, len(items)*2)
+
 	for key, value := range items {
 		data, err := json.Marshal(value)
 		if err != nil {
 			return fmt.Errorf("failed to marshal value for key %s: %w", key, err)
 		}
+
 		args = append(args, key, data)
 	}
 
-	// Use MSET for atomic multi-set
 	if err := s.client.MSet(ctx, args...).Err(); err != nil {
 		return fmt.Errorf("redis mset failed: %w", err)
 	}
 
-	// Set expiration for each key (Redis doesn't support MSET with expiration)
 	if expiration > 0 {
 		for key := range items {
 			if err := s.client.Expire(ctx, key, expiration).Err(); err != nil {
-				// Log but don't fail - data is already set
 				return fmt.Errorf("redis expire failed for key %s: %w", key, err)
 			}
 		}
@@ -262,11 +263,12 @@ func (s *RedisStore) SetMulti(ctx context.Context, items map[string]any, expirat
 	return nil
 }
 
-// DeleteMulti removes multiple keys from Redis
-func (s *RedisStore) DeleteMulti(ctx context.Context, keys []string) error {
+// DeleteMulti removes multiple keys from Redis in a single DEL call.
+func (s *RedisCart) DeleteMulti(ctx context.Context, keys []string) error {
 	if len(keys) == 0 {
 		return nil
 	}
+
 	if err := s.client.Del(ctx, keys...).Err(); err != nil {
 		return fmt.Errorf("redis del failed: %w", err)
 	}
@@ -274,42 +276,40 @@ func (s *RedisStore) DeleteMulti(ctx context.Context, keys []string) error {
 	return nil
 }
 
-// Clear flushes all keys from Redis
-// WARNING: Use with caution in production!
-func (s *RedisStore) Clear(ctx context.Context) error {
+// Clear removes all keys from Redis. Use with caution in production.
+func (s *RedisCart) Clear(ctx context.Context) error {
 	if err := s.client.FlushAll(ctx).Err(); err != nil {
 		return fmt.Errorf("redis flushall failed: %w", err)
 	}
+
 	return nil
 }
 
-// GetType returns the store type identifier
-func (s *RedisStore) GetType() string {
+// GetType returns the Redis cart type identifier.
+func (s *RedisCart) GetType() string {
 	return RedisType
 }
 
-// HealthCheck verifies Redis connectivity
-func (s *RedisStore) HealthCheck(ctx context.Context) error {
+// HealthCheck verifies Redis connectivity via PING.
+func (s *RedisCart) HealthCheck(ctx context.Context) error {
 	if err := s.client.Ping(ctx).Err(); err != nil {
 		return fmt.Errorf("redis health check failed: %w", err)
 	}
+
 	return nil
 }
 
-// Close closes the Redis client connection
-func (s *RedisStore) Close() error {
+// Close closes the Redis client connection.
+func (s *RedisCart) Close() error {
 	if err := s.client.Close(); err != nil {
 		return fmt.Errorf("redis close failed: %w", err)
 	}
+
 	return nil
 }
 
-// =============================================================================
-// Distributed Locking Implementation (Cache Stampede Prevention)
-// =============================================================================
-
-// AcquireLock attempts to acquire a distributed lock using Redis SET NX EX
-func (s *RedisStore) AcquireLock(ctx context.Context, key string, ttl time.Duration) (lockValue string, acquired bool, err error) {
+// AcquireLock attempts to acquire a distributed lock using Redis SET NX EX.
+func (s *RedisCart) AcquireLock(ctx context.Context, key string, ttl time.Duration) (lockValue string, acquired bool, err error) {
 	lockKey := getLockKey(key)
 	lockValue = generateLockValue()
 
@@ -321,33 +321,21 @@ func (s *RedisStore) AcquireLock(ctx context.Context, key string, ttl time.Durat
 	return lockValue, result, nil
 }
 
-// ReleaseLock releases a distributed lock SAFELY
-func (s *RedisStore) ReleaseLock(ctx context.Context, key string, lockValue string) error {
+// ReleaseLock releases a distributed lock safely via a Lua ownership check.
+func (s *RedisCart) ReleaseLock(ctx context.Context, key string, lockValue string) error {
 	lockKey := getLockKey(key)
 
-	result, err := s.client.Eval(ctx, releaseLockScript, []string{lockKey}, lockValue).Result()
-	if err != nil {
+	if _, err := s.client.Eval(ctx, releaseLockScript, []string{lockKey}, lockValue).Result(); err != nil {
 		return fmt.Errorf("failed to release lock: %w", err)
-	}
-
-	if result == int64(0) {
-		return nil
 	}
 
 	return nil
 }
 
-// ExtendLock extends the TTL of an existing lock (for heartbeat/renewal)
-func (s *RedisStore) ExtendLock(ctx context.Context, key string, lockValue string, ttl time.Duration) (bool, error) {
+// ExtendLock extends the TTL of an existing lock via a Lua ownership check.
+// Returns true if the lock was extended, false if it is no longer owned.
+func (s *RedisCart) ExtendLock(ctx context.Context, key string, lockValue string, ttl time.Duration) (bool, error) {
 	lockKey := getLockKey(key)
-
-	extendLockScript := `
-		if redis.call("get", KEYS[1]) == ARGV[1] then
-			return redis.call("expire", KEYS[1], ARGV[2])
-		else
-			return 0
-		end
-	`
 
 	result, err := s.client.Eval(ctx, extendLockScript, []string{lockKey}, lockValue, int(ttl.Seconds())).Result()
 	if err != nil {
@@ -357,35 +345,48 @@ func (s *RedisStore) ExtendLock(ctx context.Context, key string, lockValue strin
 	return result == int64(1), nil
 }
 
-// GetOrSetWithLock retrieves a value or sets it with distributed locking.
-func (s *RedisStore) GetOrSetWithLock(ctx context.Context, key string, loader func(context.Context) (any, error), expiration time.Duration, lockTTL time.Duration) (any, error) {
-	// Fast path: cache hit
+// GetOrSetWithLock retrieves a cached value or populates it with distributed lock protection.
+func (s *RedisCart) GetOrSetWithLock(
+	ctx context.Context,
+	key string,
+	loader func(context.Context) (any, error),
+	expiration time.Duration,
+	lockTTL time.Duration,
+) (any, error) {
 	value, err := s.Get(ctx, key)
 	if err == nil {
 		return value, nil
 	}
 
-	var notFoundErr *store.NotFound
+	var notFoundErr *cart.NotFound
 	if !errors.As(err, &notFoundErr) {
 		return nil, fmt.Errorf("cache get error: %w", err)
 	}
 
 	resultCh := s.group.DoChan(key, func() (any, error) {
-		return s.getOrSetWithDistributedLock(ctx, key, loader, expiration, lockTTL)
+		return s.getOrSetWithLock(ctx, key, loader, expiration, lockTTL)
 	})
 
 	select {
-	case result := <-resultCh:
-		if result.Err != nil {
-			return nil, result.Err
+	case r := <-resultCh:
+		if r.Err != nil {
+			return nil, r.Err
 		}
-		return result.Val, nil
+
+		return r.Val, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
 }
 
-func (s *RedisStore) getOrSetWithDistributedLock(ctx context.Context, key string, loader func(context.Context) (any, error), expiration time.Duration, lockTTL time.Duration) (any, error) {
+//nolint:cyclop
+func (s *RedisCart) getOrSetWithLock(
+	ctx context.Context,
+	key string,
+	loader func(context.Context) (any, error),
+	expiration time.Duration,
+	lockTTL time.Duration,
+) (any, error) {
 	if lockTTL == 0 {
 		lockTTL = s.config.LockTTL
 	}
@@ -400,66 +401,48 @@ func (s *RedisStore) getOrSetWithDistributedLock(ctx context.Context, key string
 	}
 
 	defer func() {
-		releaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		releaseCtx, cancel := context.WithTimeout(context.Background(), defaultReleaseLockTimeout)
 		defer cancel()
 
-		if err := s.ReleaseLock(releaseCtx, key, lockValue); err != nil {
-			slogger.Error(
-				"failed to release lock",
-				"key", key,
-				"error", err,
-			)
+		if releaseErr := s.ReleaseLock(releaseCtx, key, lockValue); releaseErr != nil {
+			slogger.Error("failed to release lock", "key", key, "error", releaseErr)
 		}
 	}()
 
-	cachedValue, err := s.Get(ctx, key)
-	if err == nil {
+	if cachedValue, getErr := s.Get(ctx, key); getErr == nil {
 		return cachedValue, nil
-	}
-
-	var doubleCheckNotFound *store.NotFound
-	if !errors.As(err, &doubleCheckNotFound) {
-		return nil, fmt.Errorf(
-			"cache get error during double-check: %w",
-			err,
-		)
 	}
 
 	renewalInterval := s.config.LockRenewalInterval
 	if renewalInterval <= 0 {
-		renewalInterval = lockTTL / 3
+		renewalInterval = lockTTL / lockRenewalDivisor
 	}
 
 	heartbeatCtx, cancelHeartbeat := context.WithCancel(ctx)
 
 	go s.startLockHeartbeat(heartbeatCtx, key, lockValue, lockTTL, renewalInterval)
 
-	result, err := loader(ctx)
-
+	result, loaderErr := loader(ctx)
 	cancelHeartbeat()
 
-	if err != nil {
-		return nil, fmt.Errorf("loader failed: %w", err)
+	if loaderErr != nil {
+		return nil, fmt.Errorf("loader failed: %w", loaderErr)
 	}
 
 	if result == nil {
 		return nil, errors.New("loader returned nil result")
 	}
 
-	if err := s.Set(ctx, key, result, expiration); err != nil {
-		slogger.Error(
-			"failed to set cache after loading",
-			"key", key,
-			"error", err,
-		)
+	if setErr := s.Set(ctx, key, result, expiration); setErr != nil {
+		slogger.Error("failed to set cache after loading", "key", key, "error", setErr)
 	}
 
 	return result, nil
 }
 
-func (s *RedisStore) waitForCache(ctx context.Context, key string) (any, error) {
+//nolint:dupl
+func (s *RedisCart) waitForCache(ctx context.Context, key string) (any, error) {
 	expBackoff := backoff.NewExponentialBackOff()
-
 	expBackoff.InitialInterval = s.config.LockInitialBackoff
 	expBackoff.MaxInterval = s.config.LockMaxBackoff
 	expBackoff.MaxElapsedTime = s.config.LockMaxWait
@@ -474,10 +457,11 @@ func (s *RedisStore) waitForCache(ctx context.Context, key string) (any, error) 
 		v, err := s.Get(ctx, key)
 		if err == nil {
 			value = v
+
 			return nil
 		}
 
-		var notFound *store.NotFound
+		var notFound *cart.NotFound
 		if errors.As(err, &notFound) {
 			return err
 		}
@@ -485,35 +469,19 @@ func (s *RedisStore) waitForCache(ctx context.Context, key string) (any, error) 
 		return backoff.Permanent(err)
 	}
 
-	err := backoff.Retry(operation, ctxBackoff)
-	if err != nil {
-		switch {
-		case errors.Is(err, context.DeadlineExceeded):
-			return nil, fmt.Errorf("timeout waiting for cache population after %v", s.config.LockMaxWait)
-
-		case errors.Is(err, context.Canceled):
-			return nil, err
-		default:
-			return nil, fmt.Errorf("waiting for cache population failed: %w", err)
-		}
+	if err := backoff.Retry(operation, ctxBackoff); err != nil {
+		return nil, mapWaitError(err, s.config.LockMaxWait)
 	}
 
 	return value, nil
 }
 
-func getLockKey(key string) string {
-	return key + lockKeySuffix
-}
-
-func generateLockValue() string {
-	bytes := make([]byte, 16)
-	if _, err := rand.Read(bytes); err != nil {
-		return fmt.Sprintf("%d", time.Now().UnixNano())
-	}
-	return hex.EncodeToString(bytes)
-}
-
-func (s *RedisStore) startLockHeartbeat(ctx context.Context, key string, lockValue string, lockTTL time.Duration, renewalInterval time.Duration) {
+//nolint:dupl
+func (s *RedisCart) startLockHeartbeat(
+	ctx context.Context,
+	key, lockValue string,
+	lockTTL, renewalInterval time.Duration,
+) {
 	ticker := time.NewTicker(renewalInterval)
 	defer ticker.Stop()
 
@@ -525,8 +493,34 @@ func (s *RedisStore) startLockHeartbeat(ctx context.Context, key string, lockVal
 			extended, err := s.ExtendLock(ctx, key, lockValue, lockTTL)
 			if err != nil || !extended {
 				slogger.Warn("lock heartbeat failed", "key", key, "error", err, "extended", extended)
+
 				return
 			}
 		}
+	}
+}
+
+func getLockKey(key string) string {
+	return key + lockKeySuffix
+}
+
+func generateLockValue() string {
+	b := make([]byte, lockValueBytes)
+
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+
+	return hex.EncodeToString(b)
+}
+
+func mapWaitError(err error, maxWait time.Duration) error {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return fmt.Errorf("timeout waiting for cache population after %v", maxWait)
+	case errors.Is(err, context.Canceled):
+		return err
+	default:
+		return fmt.Errorf("waiting for cache population failed: %w", err)
 	}
 }
