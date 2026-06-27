@@ -23,7 +23,7 @@ import (
 	cache "github.com/vinaycharlie01/nyro"
 	nyroconfig "github.com/vinaycharlie01/nyro/config"
 	"github.com/vinaycharlie01/nyro/internal/keyutil"
-	valkeystorepkg "github.com/vinaycharlie01/nyro/stores/valkey"
+	valkeystorepkg "github.com/vinaycharlie01/nyro/carts/valkey"
 )
 
 func init() {
