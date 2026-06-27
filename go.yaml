@@ -10,6 +10,17 @@ test:
     - "-short"
     - "-timeout=120s"
 
+integration:
+  packages:
+    - ./test/integration/...
+  args:
+    - "-v"
+    - "-tags=integration"
+    - "-timeout=300s"
+  env:
+    - REDIS_ADDR=localhost:6379
+    - VALKEY_ADDR=localhost:6380
+
 race:
   packages:
     - ./...

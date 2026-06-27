@@ -28,6 +28,9 @@ func init() {
 // Test runs the unit test suite (config: go.yaml → test).
 func Test() error { return gomagex.Test() }
 
+// Integration runs integration tests (config: go.yaml → integration).
+func Integration() error { return gomagex.Integration() }
+
 // Lint runs golangci-lint (config: go.yaml → lint).
 func Lint() error { return gomagex.Lint() }
 
