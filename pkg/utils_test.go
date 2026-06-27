@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// testStringer is a test type that implements fmt.Stringer
+// testStringer is a test type that implements fmt.Stringer.
 type testStringer struct {
 	value string
 }

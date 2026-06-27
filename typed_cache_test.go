@@ -26,6 +26,7 @@ func newTestCache(t *testing.T) cache.Cache {
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = c.Close() })
+
 	return c
 }
 

@@ -5,8 +5,8 @@ import (
 	"strconv"
 )
 
-// keyToString converts any key type to string
-// This handles strings, integers, and other types consistently
+// keyToString converts any key type to string.
+// This handles strings, integers, and other types consistently.
 func KeyToString(key any) string {
 	switch v := key.(type) {
 	case string:
@@ -40,5 +40,6 @@ func KeyToString(key any) string {
 
 func ZeroValue[T any]() T {
 	var zero T
+
 	return zero
 }

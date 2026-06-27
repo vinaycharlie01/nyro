@@ -64,7 +64,7 @@ func WithExpiration(expiration time.Duration) Option {
 	}
 }
 
-// WithTTL is an alias for WithExpiration for backward compatibility
+// WithTTL is an alias for WithExpiration for backward compatibility.
 func WithTTL(ttl time.Duration) Option {
 	return WithExpiration(ttl)
 }
@@ -76,7 +76,7 @@ func WithTags(tags []string) Option {
 	}
 }
 
-// WithTagsTTL allows to specify a time-to-live parameter for tags
+// WithTagsTTL allows to specify a time-to-live parameter for tags.
 func WithTagsTTL(ttl time.Duration) Option {
 	return func(o *Options) {
 		o.TagsTTL = ttl

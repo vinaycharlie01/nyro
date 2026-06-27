@@ -21,9 +21,9 @@ import (
 
 	goredis "github.com/redis/go-redis/v9"
 	cache "github.com/vinaycharlie01/nyro"
+	redisstore "github.com/vinaycharlie01/nyro/carts/redis"
 	nyroconfig "github.com/vinaycharlie01/nyro/config"
 	"github.com/vinaycharlie01/nyro/internal/keyutil"
-	redisstore "github.com/vinaycharlie01/nyro/carts/redis"
 )
 
 func init() {
@@ -39,9 +39,11 @@ func init() {
 
 // Adapter implements cache.Cache backed by Redis.
 type Adapter struct {
-	store  *redisstore.RedisStore
+	store  *redisstore.RedisCart
 	config nyroconfig.RedisConfig
 }
+
+const redisConnectTimeout = 5 * time.Second
 
 // New creates a Redis-backed cache.Cache.
 // It pings the server to verify connectivity before returning.
@@ -58,14 +60,14 @@ func New(cfg nyroconfig.RedisConfig) (*Adapter, error) {
 		WriteTimeout: cfg.WriteTimeout,
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), redisConnectTimeout)
 	defer cancel()
 
 	if err := client.Ping(ctx).Err(); err != nil {
 		return nil, fmt.Errorf("redis: ping failed: %w", err)
 	}
 
-	var storeOpts []redisstore.RedisStoreOption
+	var storeOpts []redisstore.RedisCartOption
 	if cfg.LockTTL > 0 {
 		storeOpts = append(storeOpts, redisstore.WithLockTTL(cfg.LockTTL))
 	}
@@ -86,6 +88,7 @@ func (a *Adapter) Get(ctx context.Context, key any) (any, error) {
 
 func (a *Adapter) Set(ctx context.Context, key any, value any, options ...cache.Option) error {
 	opts := cache.ApplyOptions(options...)
+
 	return a.store.Set(ctx, keyutil.ToString(key), value, effectiveTTL(opts.Expiration, a.config.DefaultTTL))
 }
 
@@ -101,12 +104,14 @@ func (a *Adapter) Exists(ctx context.Context, key any) (bool, error) {
 	return a.store.Exists(ctx, keyutil.ToString(key))
 }
 
+const lockTTLC = 10 * time.Second
+
 func (a *Adapter) GetOrSet(ctx context.Context, key any, loader func(context.Context) (any, error), opts ...cache.Option) (any, error) {
 	options := cache.ApplyOptions(opts...)
 	ttl := effectiveTTL(options.Expiration, a.config.DefaultTTL)
 	lockTTL := a.config.LockTTL
 	if lockTTL == 0 {
-		lockTTL = 10 * time.Second
+		lockTTL = lockTTLC
 	}
 
 	return a.store.GetOrSetWithLock(ctx, keyutil.ToString(key), loader, ttl, lockTTL)
@@ -190,15 +195,17 @@ func (a *Adapter) Close() error {
 	return a.store.Close()
 }
 
-// effectiveTTL returns the first non-zero duration, falling back to 24 hours.
-func effectiveTTL(requested, defaultTTL time.Duration) time.Duration {
+const defaultTTL = 24 * time.Hour
+
+// effectiveTTL returns the first non-zero duration, falling back to the default TTL.
+func effectiveTTL(requested, configured time.Duration) time.Duration {
 	if requested > 0 {
 		return requested
 	}
 
-	if defaultTTL > 0 {
-		return defaultTTL
+	if configured > 0 {
+		return configured
 	}
 
-	return 24 * time.Hour
+	return defaultTTL
 }

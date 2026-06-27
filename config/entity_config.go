@@ -27,17 +27,18 @@ func LoadEntityConfigManager(yamlData []byte) *EntityConfigManager {
 	if err := manager.LoadFromEnv(); err != nil {
 		slogger.Warn("failed to load cache config from environment", "error", err)
 	}
+
 	return manager
 }
 
-// toEnvFormat converts entity name to environment variable format
-// Example: "user_group" -> "USER_GROUP"
+// toEnvFormat converts entity name to environment variable format.
+// Example: "user_group" -> "USER_GROUP".
 func toEnvFormat(s string) string {
 	return strings.ToUpper(strings.ReplaceAll(s, "-", "_"))
 }
 
 // EntityCacheConfig represents cache configuration for a specific entity/repository.
-// Configuration priority: Environment Variables > YAML
+// Configuration priority: Environment Variables > YAML.
 type EntityCacheConfig struct {
 	KeyPrefix string        `yaml:"key_prefix" env:"KEY_PREFIX"`
 	TTL       time.Duration `yaml:"ttl" env:"TTL"`
@@ -68,7 +69,7 @@ func NewEntityConfigManager(defaults ...map[string]EntityCacheConfig) *EntityCon
 	return manager
 }
 
-// LoadFromYAML loads entity cache configuration from YAML data
+// LoadFromYAML loads entity cache configuration from YAML data.
 func (m *EntityConfigManager) LoadFromYAML(data []byte) error {
 	var wrapper struct {
 		Cache struct {
@@ -121,6 +122,7 @@ func (m *EntityConfigManager) LoadFromEnv() error {
 			Prefix: envPrefix,
 		}); err != nil {
 			slogger.Debug("failed to parse environment variables for entity", "entity", entityName, "prefix", envPrefix, "error", err)
+
 			continue
 		}
 		m.entities[entityName] = config
@@ -129,7 +131,7 @@ func (m *EntityConfigManager) LoadFromEnv() error {
 	return nil
 }
 
-// GetConfig returns the cache configuration for a specific entity
+// GetConfig returns the cache configuration for a specific entity.
 func (m *EntityConfigManager) GetConfig(entityName string) (EntityCacheConfig, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -137,19 +139,21 @@ func (m *EntityConfigManager) GetConfig(entityName string) (EntityCacheConfig, e
 	if !ok {
 		return EntityCacheConfig{}, fmt.Errorf("entity config not found: %s", entityName)
 	}
+
 	return config, nil
 }
 
-// MustGetConfig returns the cache configuration for a specific entity or panics
+// MustGetConfig returns the cache configuration for a specific entity or panics.
 func (m *EntityConfigManager) MustGetConfig(entityName string) EntityCacheConfig {
 	config, err := m.GetConfig(entityName)
 	if err != nil {
 		panic(err)
 	}
+
 	return config
 }
 
-// GetAllConfigs returns a copy of all entity cache configurations
+// GetAllConfigs returns a copy of all entity cache configurations.
 func (m *EntityConfigManager) GetAllConfigs() map[string]EntityCacheConfig {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -158,10 +162,11 @@ func (m *EntityConfigManager) GetAllConfigs() map[string]EntityCacheConfig {
 	for name, config := range m.entities {
 		configs[name] = config
 	}
+
 	return configs
 }
 
-// SetConfig sets or updates the cache configuration for a specific entity
+// SetConfig sets or updates the cache configuration for a specific entity.
 func (m *EntityConfigManager) SetConfig(entityName string, config EntityCacheConfig) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -169,7 +174,7 @@ func (m *EntityConfigManager) SetConfig(entityName string, config EntityCacheCon
 }
 
 // RegisterEntity registers a new entity with its cache configuration
-// This is an alias for SetConfig for better semantic clarity
+// This is an alias for SetConfig for better semantic clarity.
 func (m *EntityConfigManager) RegisterEntity(entityName string, config EntityCacheConfig) {
 	m.SetConfig(entityName, config)
 }

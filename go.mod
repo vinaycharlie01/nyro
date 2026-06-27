@@ -6,7 +6,6 @@ require (
 	github.com/alicebob/miniredis/v2 v2.38.0
 	github.com/caarlos0/env/v11 v11.4.1
 	github.com/cenkalti/backoff/v4 v4.3.0
-	github.com/magefile/mage v1.17.2
 	github.com/nirantaraai/nava v0.0.0-20260621090652-f90eb53980f2
 	github.com/redis/go-redis/v9 v9.21.0
 	github.com/stretchr/testify v1.11.1

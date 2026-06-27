@@ -16,17 +16,17 @@ import (
 )
 
 const (
-	testSmallConcurrency  = 10
-	testLargeConcurrency  = 100
-	testMedConcurrency    = 20
-	testLoaderDelay10ms   = 10 * time.Millisecond
-	testLoaderDelay30ms   = 30 * time.Millisecond
-	testLoaderDelay50ms   = 50 * time.Millisecond
-	testLoaderDelay800ms  = 800 * time.Millisecond
-	testLockTTL200ms      = 200 * time.Millisecond
-	testExpiry100ms       = 100 * time.Millisecond
-	testFastForward150ms  = 150 * time.Millisecond
-	testFastForward2ms    = 2 * time.Millisecond
+	testSmallConcurrency = 10
+	testLargeConcurrency = 100
+	testMedConcurrency   = 20
+	testLoaderDelay10ms  = 10 * time.Millisecond
+	testLoaderDelay30ms  = 30 * time.Millisecond
+	testLoaderDelay50ms  = 50 * time.Millisecond
+	testLoaderDelay800ms = 800 * time.Millisecond
+	testLockTTL200ms     = 200 * time.Millisecond
+	testExpiry100ms      = 100 * time.Millisecond
+	testFastForward150ms = 150 * time.Millisecond
+	testFastForward2ms   = 2 * time.Millisecond
 )
 
 func runConcurrentWithStart(concurrency int, fn func(idx int)) {
@@ -303,7 +303,11 @@ func TestRedisCart_GetOrSetWithLock_Concurrent(t *testing.T) {
 	key := "test:concurrent"
 	loaderCalls := int32(0)
 
-	loader := func(_ context.Context) (interface{}, error) {
+	loader := func(ctx context.Context) (interface{}, error) {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
 		atomic.AddInt32(&loaderCalls, 1)
 		time.Sleep(testLoaderDelay50ms)
 
@@ -449,7 +453,11 @@ func TestRedisCart_HighConcurrency(t *testing.T) {
 	ctx := context.Background()
 	loaderCalls := int32(0)
 
-	loader := func(_ context.Context) (interface{}, error) {
+	loader := func(ctx context.Context) (interface{}, error) {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
 		atomic.AddInt32(&loaderCalls, 1)
 		time.Sleep(testLoaderDelay30ms)
 
@@ -510,7 +518,11 @@ func TestRedisCart_LockHeartbeat(t *testing.T) {
 	ctx := context.Background()
 	loaderCalls := int32(0)
 
-	loader := func(_ context.Context) (interface{}, error) {
+	loader := func(ctx context.Context) (interface{}, error) {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
 		atomic.AddInt32(&loaderCalls, 1)
 		time.Sleep(testLoaderDelay800ms)
 

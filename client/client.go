@@ -75,7 +75,12 @@ func (c *defaultClient) Exists(ctx context.Context, key any) (bool, error) {
 	return c.cache.Exists(ctx, key)
 }
 
-func (c *defaultClient) GetOrSet(ctx context.Context, key any, loader func(context.Context) (any, error), opts ...cache.Option) (any, error) {
+func (c *defaultClient) GetOrSet(
+	ctx context.Context,
+	key any,
+	loader func(context.Context) (any, error),
+	opts ...cache.Option,
+) (any, error) {
 	return c.cache.GetOrSet(ctx, key, loader, opts...)
 }
 

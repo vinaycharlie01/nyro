@@ -379,7 +379,7 @@ func (s *RedisCart) GetOrSetWithLock(
 	}
 }
 
-//nolint:cyclop
+//nolint:contextcheck // Using Background() in defer is intentional - lock release must complete even if parent ctx is cancelled
 func (s *RedisCart) getOrSetWithLock(
 	ctx context.Context,
 	key string,
@@ -440,7 +440,6 @@ func (s *RedisCart) getOrSetWithLock(
 	return result, nil
 }
 
-//nolint:dupl
 func (s *RedisCart) waitForCache(ctx context.Context, key string) (any, error) {
 	expBackoff := backoff.NewExponentialBackOff()
 	expBackoff.InitialInterval = s.config.LockInitialBackoff
@@ -476,7 +475,6 @@ func (s *RedisCart) waitForCache(ctx context.Context, key string) (any, error) {
 	return value, nil
 }
 
-//nolint:dupl
 func (s *RedisCart) startLockHeartbeat(
 	ctx context.Context,
 	key, lockValue string,

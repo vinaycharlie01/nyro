@@ -21,9 +21,9 @@ import (
 
 	valkeygo "github.com/valkey-io/valkey-go"
 	cache "github.com/vinaycharlie01/nyro"
+	valkeystorepkg "github.com/vinaycharlie01/nyro/carts/valkey"
 	nyroconfig "github.com/vinaycharlie01/nyro/config"
 	"github.com/vinaycharlie01/nyro/internal/keyutil"
-	valkeystorepkg "github.com/vinaycharlie01/nyro/carts/valkey"
 )
 
 func init() {
@@ -43,6 +43,8 @@ type Adapter struct {
 	config nyroconfig.ValkeyConfig
 }
 
+const redisConnectTimeout = 5 * time.Second
+
 // New creates a Valkey-backed cache.Cache.
 // It pings the server to verify connectivity before returning.
 func New(cfg nyroconfig.ValkeyConfig) (*Adapter, error) {
@@ -55,11 +57,12 @@ func New(cfg nyroconfig.ValkeyConfig) (*Adapter, error) {
 		return nil, fmt.Errorf("valkey: create client: %w", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), redisConnectTimeout)
 	defer cancel()
 
 	if err := client.Do(ctx, client.B().Ping().Build()).Error(); err != nil {
 		client.Close()
+
 		return nil, fmt.Errorf("valkey: ping failed: %w", err)
 	}
 
@@ -84,6 +87,7 @@ func (a *Adapter) Get(ctx context.Context, key any) (any, error) {
 
 func (a *Adapter) Set(ctx context.Context, key any, value any, options ...cache.Option) error {
 	opts := cache.ApplyOptions(options...)
+
 	return a.store.Set(ctx, keyutil.ToString(key), value, effectiveTTL(opts.Expiration, a.config.DefaultTTL))
 }
 
@@ -99,12 +103,22 @@ func (a *Adapter) Exists(ctx context.Context, key any) (bool, error) {
 	return a.store.Exists(ctx, keyutil.ToString(key))
 }
 
-func (a *Adapter) GetOrSet(ctx context.Context, key any, loader func(context.Context) (any, error), opts ...cache.Option) (any, error) {
+const (
+	defaultLockTTL = 10 * time.Second
+)
+
+func (a *Adapter) GetOrSet(
+	ctx context.Context,
+	key any,
+	loader func(context.Context) (any, error),
+	opts ...cache.Option,
+) (any, error) {
 	options := cache.ApplyOptions(opts...)
 	ttl := effectiveTTL(options.Expiration, a.config.DefaultTTL)
+
 	lockTTL := a.config.LockTTL
 	if lockTTL == 0 {
-		lockTTL = 10 * time.Second
+		lockTTL = defaultLockTTL
 	}
 
 	return a.store.GetOrSetWithLock(ctx, keyutil.ToString(key), loader, ttl, lockTTL)
@@ -188,6 +202,10 @@ func (a *Adapter) Close() error {
 	return a.store.Close()
 }
 
+const (
+	defaultTTLC = 24 * time.Hour
+)
+
 func effectiveTTL(requested, defaultTTL time.Duration) time.Duration {
 	if requested > 0 {
 		return requested
@@ -197,5 +215,5 @@ func effectiveTTL(requested, defaultTTL time.Duration) time.Duration {
 		return defaultTTL
 	}
 
-	return 24 * time.Hour
+	return defaultTTLC
 }

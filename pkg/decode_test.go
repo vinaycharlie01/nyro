@@ -32,6 +32,7 @@ func TestDecodeString(t *testing.T) {
 
 			if tt.wantErr {
 				require.Error(t, err)
+
 				return
 			}
 
@@ -79,6 +80,7 @@ func TestDecodeUser(t *testing.T) {
 
 			if tt.wantErr {
 				require.Error(t, err)
+
 				return
 			}
 

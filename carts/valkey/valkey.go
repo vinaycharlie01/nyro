@@ -26,17 +26,19 @@ import (
 )
 
 const (
-	// ValkeyType represents the storage type
+	// ValkeyType represents the storage type.
 	ValkeyType = "valkey"
 
-	// Lock configuration defaults
+	// Lock configuration defaults.
+	defaultReleaseLockTimeout = 5 * time.Second
 	defaultLockTTL            = 10 * time.Second
 	defaultLockMaxWait        = 3 * time.Second
 	defaultLockInitialBackoff = 50 * time.Millisecond
 	defaultLockMaxBackoff     = 500 * time.Millisecond
 	lockKeySuffix             = ":lock"
+	defaultLockMultiplier     = 2.0
 
-	// Lua script for safe lock release (only delete if value matches)
+	// Lua script for safe lock release (only delete if value matches).
 	releaseLockScript = `
 		if redis.call("get", KEYS[1]) == ARGV[1] then
 			return redis.call("del", KEYS[1])
@@ -46,7 +48,7 @@ const (
 	`
 )
 
-// ValkeyStoreConfig holds configuration for Valkey store
+// ValkeyStoreConfig holds configuration for Valkey store.
 type ValkeyStoreConfig struct {
 	LockTTL             time.Duration
 	LockMaxWait         time.Duration
@@ -56,14 +58,14 @@ type ValkeyStoreConfig struct {
 	LockRenewalInterval time.Duration
 }
 
-// DefaultValkeyStoreConfig returns default configuration
+// DefaultValkeyStoreConfig returns default configuration.
 func DefaultValkeyStoreConfig() *ValkeyStoreConfig {
 	return &ValkeyStoreConfig{
 		LockTTL:            defaultLockTTL,
 		LockMaxWait:        defaultLockMaxWait,
 		LockInitialBackoff: defaultLockInitialBackoff,
 		LockMaxBackoff:     defaultLockMaxBackoff,
-		LockMultiplier:     2.0,
+		LockMultiplier:     defaultLockMultiplier,
 	}
 }
 
@@ -73,24 +75,24 @@ type ValkeyStore struct {
 	config *ValkeyStoreConfig
 }
 
-// ValkeyStoreOption is a functional option for configuring ValkeyStore
+// ValkeyStoreOption is a functional option for configuring ValkeyStore.
 type ValkeyStoreOption func(*ValkeyStoreConfig)
 
-// WithLockTTL sets the TTL for distributed locks
+// WithLockTTL sets the TTL for distributed locks.
 func WithLockTTL(ttl time.Duration) ValkeyStoreOption {
 	return func(c *ValkeyStoreConfig) {
 		c.LockTTL = ttl
 	}
 }
 
-// WithLockMaxWait sets the maximum time to wait for lock holder to finish
+// WithLockMaxWait sets the maximum time to wait for lock holder to finish.
 func WithLockMaxWait(d time.Duration) ValkeyStoreOption {
 	return func(c *ValkeyStoreConfig) {
 		c.LockMaxWait = d
 	}
 }
 
-// WithLockBackoff sets the initial and maximum backoff intervals
+// WithLockBackoff sets the initial and maximum backoff intervals.
 func WithLockBackoff(initial, max time.Duration) ValkeyStoreOption {
 	return func(c *ValkeyStoreConfig) {
 		c.LockInitialBackoff = initial
@@ -98,14 +100,14 @@ func WithLockBackoff(initial, max time.Duration) ValkeyStoreOption {
 	}
 }
 
-// WithLockMultiplier sets the backoff multiplier
+// WithLockMultiplier sets the backoff multiplier.
 func WithLockMultiplier(multiplier float64) ValkeyStoreOption {
 	return func(c *ValkeyStoreConfig) {
 		c.LockMultiplier = multiplier
 	}
 }
 
-// NewValkey creates a new Valkey store instance
+// NewValkey creates a new Valkey store instance.
 func NewValkey(client valkey.Client, opts ...ValkeyStoreOption) *ValkeyStore {
 	config := DefaultValkeyStoreConfig()
 	for _, opt := range opts {
@@ -118,7 +120,7 @@ func NewValkey(client valkey.Client, opts ...ValkeyStoreOption) *ValkeyStore {
 	}
 }
 
-// Get retrieves a value from Valkey
+// Get retrieves a value from Valkey .
 func (s *ValkeyStore) Get(ctx context.Context, key string) (any, error) {
 	cmd := s.client.B().Get().Key(key).Build()
 	result := s.client.Do(ctx, cmd)
@@ -127,6 +129,7 @@ func (s *ValkeyStore) Get(ctx context.Context, key string) (any, error) {
 		if valkey.IsValkeyNil(err) {
 			return nil, store.NotFoundWithCause(err)
 		}
+
 		return nil, fmt.Errorf("valkey get failed: %w", err)
 	}
 
@@ -139,10 +142,11 @@ func (s *ValkeyStore) Get(ctx context.Context, key string) (any, error) {
 	if err := json.Unmarshal([]byte(str), &value); err != nil {
 		return str, nil
 	}
+
 	return value, nil
 }
 
-// Set stores a value in Valkey with expiration
+// Set stores a value in Valkey with expiration.
 func (s *ValkeyStore) Set(ctx context.Context, key string, value any, expiration time.Duration) error {
 	data, err := json.Marshal(value)
 	if err != nil {
@@ -157,16 +161,17 @@ func (s *ValkeyStore) Set(ctx context.Context, key string, value any, expiration
 	return nil
 }
 
-// Delete removes a key from Valkey
+// Delete removes a key from Valkey.
 func (s *ValkeyStore) Delete(ctx context.Context, key string) error {
 	cmd := s.client.B().Del().Key(key).Build()
 	if err := s.client.Do(ctx, cmd).Error(); err != nil {
 		return fmt.Errorf("valkey delete failed: %w", err)
 	}
+
 	return nil
 }
 
-// Exists checks if a key exists in Valkey
+// Exists checks if a key exists in Valkey.
 func (s *ValkeyStore) Exists(ctx context.Context, key string) (bool, error) {
 	cmd := s.client.B().Exists().Key(key).Build()
 	result := s.client.Do(ctx, cmd)
@@ -183,7 +188,7 @@ func (s *ValkeyStore) Exists(ctx context.Context, key string) (bool, error) {
 	return count > 0, nil
 }
 
-// GetMulti retrieves multiple keys from Valkey
+// GetMulti retrieves multiple keys from Valkey.
 func (s *ValkeyStore) GetMulti(ctx context.Context, keys []string) (map[string]any, error) {
 	if len(keys) == 0 {
 		return make(map[string]any), nil
@@ -223,7 +228,7 @@ func (s *ValkeyStore) GetMulti(ctx context.Context, keys []string) (map[string]a
 	return resultMap, nil
 }
 
-// SetMulti sets multiple keys in Valkey
+// SetMulti sets multiple keys in Valkey.
 func (s *ValkeyStore) SetMulti(ctx context.Context, items map[string]any, expiration time.Duration) error {
 	if len(items) == 0 {
 		return nil
@@ -238,7 +243,7 @@ func (s *ValkeyStore) SetMulti(ctx context.Context, items map[string]any, expira
 	return nil
 }
 
-// DeleteMulti removes multiple keys from Valkey
+// DeleteMulti removes multiple keys from Valkey.
 func (s *ValkeyStore) DeleteMulti(ctx context.Context, keys []string) error {
 	if len(keys) == 0 {
 		return nil
@@ -252,36 +257,39 @@ func (s *ValkeyStore) DeleteMulti(ctx context.Context, keys []string) error {
 	return nil
 }
 
-// Clear flushes all keys from Valkey
+// Clear flushes all keys from Valkey.
 func (s *ValkeyStore) Clear(ctx context.Context) error {
 	cmd := s.client.B().Flushall().Build()
 	if err := s.client.Do(ctx, cmd).Error(); err != nil {
 		return fmt.Errorf("valkey flushall failed: %w", err)
 	}
+
 	return nil
 }
 
-// GetType returns the store type identifier
+// GetType returns the store type identifier.
 func (s *ValkeyStore) GetType() string {
 	return ValkeyType
 }
 
-// HealthCheck verifies Valkey connectivity
+// HealthCheck verifies Valkey connectivity.
 func (s *ValkeyStore) HealthCheck(ctx context.Context) error {
 	cmd := s.client.B().Ping().Build()
 	if err := s.client.Do(ctx, cmd).Error(); err != nil {
 		return fmt.Errorf("valkey health check failed: %w", err)
 	}
+
 	return nil
 }
 
-// Close closes the Valkey client connection
+// Close closes the Valkey client connection.
 func (s *ValkeyStore) Close() error {
 	s.client.Close()
+
 	return nil
 }
 
-// AcquireLock attempts to acquire a distributed lock
+// AcquireLock attempts to acquire a distributed lock.
 func (s *ValkeyStore) AcquireLock(ctx context.Context, key string, ttl time.Duration) (lockValue string, acquired bool, err error) {
 	lockKey := getLockKey(key)
 	lockValue = generateLockValue()
@@ -299,7 +307,7 @@ func (s *ValkeyStore) AcquireLock(ctx context.Context, key string, ttl time.Dura
 	return lockValue, acquired, nil
 }
 
-// ReleaseLock releases a distributed lock SAFELY
+// ReleaseLock releases a distributed lock SAFELY.
 func (s *ValkeyStore) ReleaseLock(ctx context.Context, key string, lockValue string) error {
 	lockKey := getLockKey(key)
 
@@ -313,7 +321,7 @@ func (s *ValkeyStore) ReleaseLock(ctx context.Context, key string, lockValue str
 	return nil
 }
 
-// ExtendLock extends the TTL of an existing lock
+// ExtendLock extends the TTL of an existing lock.
 func (s *ValkeyStore) ExtendLock(ctx context.Context, key string, lockValue string, ttl time.Duration) (bool, error) {
 	lockKey := getLockKey(key)
 
@@ -325,7 +333,8 @@ func (s *ValkeyStore) ExtendLock(ctx context.Context, key string, lockValue stri
 		end
 	`
 
-	cmd := s.client.B().Eval().Script(extendLockScript).Numkeys(1).Key(lockKey).Arg(lockValue).Arg(fmt.Sprintf("%d", int(ttl.Seconds()))).Build()
+	cmd := s.client.B().Eval().Script(extendLockScript).Numkeys(1).Key(lockKey).
+		Arg(lockValue).Arg(fmt.Sprintf("%d", int(ttl.Seconds()))).Build()
 	result := s.client.Do(ctx, cmd)
 
 	if err := result.Error(); err != nil {
@@ -340,8 +349,18 @@ func (s *ValkeyStore) ExtendLock(ctx context.Context, key string, lockValue stri
 	return count == 1, nil
 }
 
+const renewalIntervalc = 3
+
 // GetOrSetWithLock retrieves a value or sets it with distributed locking
-func (s *ValkeyStore) GetOrSetWithLock(ctx context.Context, key string, loader func(context.Context) (any, error), expiration time.Duration, lockTTL time.Duration) (any, error) {
+//
+//nolint:contextcheck // Using Background() in defer is intentional - lock release must complete even if parent ctx is cancelled
+func (s *ValkeyStore) GetOrSetWithLock(
+	ctx context.Context,
+	key string,
+	loader func(context.Context) (any, error),
+	expiration time.Duration,
+	lockTTL time.Duration,
+) (any, error) {
 	value, err := s.Get(ctx, key)
 	if err == nil {
 		return value, nil
@@ -366,7 +385,7 @@ func (s *ValkeyStore) GetOrSetWithLock(ctx context.Context, key string, loader f
 	}
 
 	defer func() {
-		releaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		releaseCtx, cancel := context.WithTimeout(context.Background(), defaultReleaseLockTimeout)
 		defer cancel()
 
 		if err := s.ReleaseLock(releaseCtx, key, lockValue); err != nil {
@@ -386,7 +405,7 @@ func (s *ValkeyStore) GetOrSetWithLock(ctx context.Context, key string, loader f
 
 	renewalInterval := s.config.LockRenewalInterval
 	if renewalInterval <= 0 {
-		renewalInterval = lockTTL / 3
+		renewalInterval = lockTTL / renewalIntervalc
 	}
 
 	heartbeatCtx, cancelHeartbeat := context.WithCancel(ctx)
@@ -425,6 +444,7 @@ func (s *ValkeyStore) waitForCache(ctx context.Context, key string) (any, error)
 		v, err := s.Get(ctx, key)
 		if err == nil {
 			value = v
+
 			return nil
 		}
 
@@ -460,10 +480,15 @@ func generateLockValue() string {
 	if _, err := rand.Read(bytes); err != nil {
 		return fmt.Sprintf("%d", time.Now().UnixNano())
 	}
+
 	return hex.EncodeToString(bytes)
 }
 
-func (s *ValkeyStore) startLockHeartbeat(ctx context.Context, key string, lockValue string, lockTTL time.Duration, renewalInterval time.Duration) {
+func (s *ValkeyStore) startLockHeartbeat(
+	ctx context.Context,
+	key, lockValue string,
+	lockTTL, renewalInterval time.Duration,
+) {
 	ticker := time.NewTicker(renewalInterval)
 	defer ticker.Stop()
 
@@ -475,6 +500,7 @@ func (s *ValkeyStore) startLockHeartbeat(ctx context.Context, key string, lockVa
 			extended, err := s.ExtendLock(ctx, key, lockValue, lockTTL)
 			if err != nil || !extended {
 				slogger.Warn("lock heartbeat failed", "key", key, "error", err, "extended", extended)
+
 				return
 			}
 		}

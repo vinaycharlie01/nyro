@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Helper function to create test config
+// Helper function to create test config.
 func testConfig(prefix string, ttl time.Duration, enabled bool) EntityCacheConfig {
 	return EntityCacheConfig{
 		KeyPrefix: prefix,
@@ -110,13 +110,13 @@ func TestEntityConfigManager_LoadFromYAML_Invalid(t *testing.T) {
 
 func TestEntityConfigManager_LoadFromEnv(t *testing.T) {
 	// Setup env vars - prefix must match entity name exactly
-	os.Setenv("CACHE_country_KEY_PREFIX", "country_env")
-	os.Setenv("CACHE_country_TTL", "45m")
-	os.Setenv("CACHE_country_ENABLED", "false")
+	_ = os.Setenv("CACHE_country_KEY_PREFIX", "country_env")
+	_ = os.Setenv("CACHE_country_TTL", "45m")
+	_ = os.Setenv("CACHE_country_ENABLED", "false")
 	defer func() {
-		os.Unsetenv("CACHE_country_KEY_PREFIX")
-		os.Unsetenv("CACHE_country_TTL")
-		os.Unsetenv("CACHE_country_ENABLED")
+		_ = os.Unsetenv("CACHE_country_KEY_PREFIX")
+		_ = os.Unsetenv("CACHE_country_TTL")
+		_ = os.Unsetenv("CACHE_country_ENABLED")
 	}()
 
 	manager := NewEntityConfigManager(map[string]EntityCacheConfig{

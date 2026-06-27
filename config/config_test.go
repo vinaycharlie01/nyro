@@ -66,7 +66,9 @@ func TestNew(t *testing.T) {
 
 		require.NoError(t, err)
 		assert.NotNil(t, c)
-		defer c.Close()
+		defer func() {
+			_ = c.Close()
+		}()
 	})
 
 	t.Run("error_unsupported_type", func(t *testing.T) {

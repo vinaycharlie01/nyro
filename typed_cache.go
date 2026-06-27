@@ -39,6 +39,7 @@ func (tc *TypedCache[T]) Get(ctx context.Context, key any) (T, error) {
 	if err != nil {
 		return zeroValue[T](), err
 	}
+
 	return Decode[T](result)
 }
 
@@ -105,6 +106,7 @@ func (tc *TypedCache[T]) SetMulti(ctx context.Context, items map[any]T, opts ...
 	for key, value := range items {
 		anyItems[key] = value
 	}
+
 	return tc.cache.SetMulti(ctx, anyItems, opts...)
 }
 

@@ -103,6 +103,7 @@ func TestAdapter_GetOrSet(t *testing.T) {
 	calls := 0
 	loader := func(_ context.Context) (any, error) {
 		calls++
+
 		return "loaded", nil
 	}
 
