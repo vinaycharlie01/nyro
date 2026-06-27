@@ -1,3 +1,5 @@
+// Deprecated: Use github.com/vinaycharlie01/nyro/adapters/valkey instead.
+// This file is retained for backward compatibility and will be removed in v2.
 package cache_adapter
 
 import (
@@ -9,237 +11,180 @@ import (
 	valkeygo "github.com/valkey-io/valkey-go"
 	cache "github.com/vinaycharlie01/nyro"
 	"github.com/vinaycharlie01/nyro/config"
-	"github.com/vinaycharlie01/nyro/stores/valkey"
+	"github.com/vinaycharlie01/nyro/internal/keyutil"
+	valkeystorepkg "github.com/vinaycharlie01/nyro/stores/valkey"
 )
 
-func init() {
-	// Register Valkey cache factory - enables pluggable cache backend swapping
-	// Add new backends: 1) Implement Store interface 2) Create adapter 3) Register
-	Register(config.CacheValkey, func(cfg config.Config) (cache.Cache, error) {
-		valkeyConfig, ok := cfg.(*config.ValkeyConfig)
-		if !ok {
-			return nil, fmt.Errorf("invalid config type for Valkey cache")
-		}
-		return NewValkeyAdapter(*valkeyConfig)
-	})
-}
-
-// ValkeyAdapter implements Cache interface using Valkey store.
-// Adapter pattern: wraps ValkeyStore, handles key conversion and TTL management.
+// ValkeyAdapter implements cache.Cache using Valkey.
+// Deprecated: Use adapters/valkey.Adapter instead.
 type ValkeyAdapter struct {
-	store  *valkey.ValkeyStore
-	config config.ValkeyConfig
+	store  *valkeystorepkg.ValkeyStore
+	cfg    config.ValkeyConfig
 }
 
-// NewValkeyAdapter creates a new Valkey adapter
-func NewValkeyAdapter(config config.ValkeyConfig) (*ValkeyAdapter, error) {
-	// Create Valkey client
+// NewValkeyAdapter creates a Valkey-backed cache adapter.
+// Deprecated: Use adapters/valkey.New instead.
+func NewValkeyAdapter(cfg config.ValkeyConfig) (*ValkeyAdapter, error) {
 	client, err := valkeygo.NewClient(valkeygo.ClientOption{
-		InitAddress: []string{config.Addr},
-		Password:    config.Password,
-		SelectDB:    config.DB,
+		InitAddress: []string{cfg.Addr},
+		Password:    cfg.Password,
+		SelectDB:    cfg.DB,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Valkey client: %w", err)
 	}
 
-	// Test connection
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	pingCmd := client.B().Ping().Build()
-	if err := client.Do(ctx, pingCmd).Error(); err != nil {
+	if err := client.Do(ctx, client.B().Ping().Build()).Error(); err != nil {
 		client.Close()
 		return nil, fmt.Errorf("failed to connect to Valkey: %w", err)
 	}
 
-	// Create Valkey store with configuration
-	var storeOpts []valkey.ValkeyStoreOption
-	if config.LockTTL > 0 {
-		storeOpts = append(storeOpts, valkey.WithLockTTL(config.LockTTL))
-	}
-	if config.LockMaxWait > 0 {
-		storeOpts = append(storeOpts, valkey.WithLockMaxWait(config.LockMaxWait))
+	var storeOpts []valkeystorepkg.ValkeyStoreOption
+	if cfg.LockTTL > 0 {
+		storeOpts = append(storeOpts, valkeystorepkg.WithLockTTL(cfg.LockTTL))
 	}
 
-	store := valkey.NewValkey(client, storeOpts...)
+	if cfg.LockMaxWait > 0 {
+		storeOpts = append(storeOpts, valkeystorepkg.WithLockMaxWait(cfg.LockMaxWait))
+	}
 
 	return &ValkeyAdapter{
-		store:  store,
-		config: config,
+		store: valkeystorepkg.NewValkey(client, storeOpts...),
+		cfg:   cfg,
 	}, nil
 }
 
-// Get retrieves a value from cache
 func (a *ValkeyAdapter) Get(ctx context.Context, key any) (any, error) {
-	strKey := keyToString(key)
-	return a.store.Get(ctx, strKey)
+	return a.store.Get(ctx, keyutil.ToString(key))
 }
 
-// Set stores a value in cache
-func (a *ValkeyAdapter) Set(ctx context.Context, key any, value any, options ...Option) error {
-	strKey := keyToString(key)
-
-	// Apply options to get expiration
-	opts := ApplyOptions(options...)
-	expiration := opts.Expiration
-	if expiration == 0 {
-		expiration = a.config.DefaultTTL
+func (a *ValkeyAdapter) Set(ctx context.Context, key any, value any, options ...cache.Option) error {
+	opts := cache.ApplyOptions(options...)
+	ttl := opts.Expiration
+	if ttl == 0 {
+		ttl = a.cfg.DefaultTTL
 	}
-	if expiration == 0 {
-		expiration = 24 * time.Hour // Default to 24 hours if not configured
+	if ttl == 0 {
+		ttl = 24 * time.Hour
 	}
 
-	return a.store.Set(ctx, strKey, value, expiration)
+	return a.store.Set(ctx, keyutil.ToString(key), value, ttl)
 }
 
-// Delete removes a key from cache
 func (a *ValkeyAdapter) Delete(ctx context.Context, key any) error {
-	strKey := keyToString(key)
-	return a.store.Delete(ctx, strKey)
+	return a.store.Delete(ctx, keyutil.ToString(key))
 }
 
-// Clear removes all keys from cache
 func (a *ValkeyAdapter) Clear(ctx context.Context) error {
 	return a.store.Clear(ctx)
 }
 
-// GetMulti retrieves multiple values from cache
+func (a *ValkeyAdapter) Exists(ctx context.Context, key any) (bool, error) {
+	return a.store.Exists(ctx, keyutil.ToString(key))
+}
+
+func (a *ValkeyAdapter) GetOrSet(ctx context.Context, key any, loader func(context.Context) (any, error), opts ...cache.Option) (any, error) {
+	options := cache.ApplyOptions(opts...)
+	ttl := options.Expiration
+	if ttl == 0 {
+		ttl = a.cfg.DefaultTTL
+	}
+	if ttl == 0 {
+		ttl = 24 * time.Hour
+	}
+
+	lockTTL := a.cfg.LockTTL
+	if lockTTL == 0 {
+		lockTTL = 10 * time.Second
+	}
+
+	return a.store.GetOrSetWithLock(ctx, keyutil.ToString(key), loader, ttl, lockTTL)
+}
+
 func (a *ValkeyAdapter) GetMulti(ctx context.Context, keys []any) (map[any]any, error) {
 	if len(keys) == 0 {
 		return make(map[any]any), nil
 	}
 
-	// Convert any keys to string keys
 	strKeys := make([]string, len(keys))
-	keyMap := make(map[string]any) // Map string key back to original key
+	keyMap := make(map[string]any, len(keys))
+
 	for i, key := range keys {
-		strKey := keyToString(key)
-		strKeys[i] = strKey
-		keyMap[strKey] = key
+		s := keyutil.ToString(key)
+		strKeys[i] = s
+		keyMap[s] = key
 	}
 
-	// Get from store
-	storeResult, err := a.store.GetMulti(ctx, strKeys)
+	res, err := a.store.GetMulti(ctx, strKeys)
 	if err != nil {
 		return nil, err
 	}
 
-	// Convert back to original key type
-	result := make(map[any]any, len(storeResult))
-	for strKey, value := range storeResult {
-		originalKey := keyMap[strKey]
-		result[originalKey] = value
+	out := make(map[any]any, len(res))
+	for sk, v := range res {
+		out[keyMap[sk]] = v
 	}
 
-	return result, nil
+	return out, nil
 }
 
-// SetMulti stores multiple values in cache
-func (a *ValkeyAdapter) SetMulti(ctx context.Context, items map[any]any, options ...Option) error {
+func (a *ValkeyAdapter) SetMulti(ctx context.Context, items map[any]any, options ...cache.Option) error {
 	if len(items) == 0 {
 		return nil
 	}
 
-	// Apply options to get expiration
-	opts := ApplyOptions(options...)
-	expiration := opts.Expiration
-	if expiration == 0 {
-		expiration = a.config.DefaultTTL
+	opts := cache.ApplyOptions(options...)
+	ttl := opts.Expiration
+	if ttl == 0 {
+		ttl = a.cfg.DefaultTTL
 	}
-	if expiration == 0 {
-		expiration = 24 * time.Hour
+	if ttl == 0 {
+		ttl = 24 * time.Hour
 	}
 
-	// Convert any keys to string keys
 	storeItems := make(map[string]any, len(items))
 	for key, value := range items {
-		strKey := keyToString(key)
-		storeItems[strKey] = value
+		storeItems[keyutil.ToString(key)] = value
 	}
 
-	return a.store.SetMulti(ctx, storeItems, expiration)
+	return a.store.SetMulti(ctx, storeItems, ttl)
 }
 
-// DeleteMulti removes multiple keys from cache
 func (a *ValkeyAdapter) DeleteMulti(ctx context.Context, keys []any) error {
 	if len(keys) == 0 {
 		return nil
 	}
 
-	// Convert any keys to string keys
 	strKeys := make([]string, len(keys))
 	for i, key := range keys {
-		strKeys[i] = keyToString(key)
+		strKeys[i] = keyutil.ToString(key)
 	}
 
 	return a.store.DeleteMulti(ctx, strKeys)
 }
 
-// Exists checks if a key exists in cache
-func (a *ValkeyAdapter) Exists(ctx context.Context, key any) (bool, error) {
-	strKey := keyToString(key)
-	return a.store.Exists(ctx, strKey)
-}
-
-// GetOrSet retrieves a value from cache, or sets it if not found
-// Uses distributed locking to prevent cache stampede
-func (a *ValkeyAdapter) GetOrSet(ctx context.Context, key any, loader func(context.Context) (any, error), opts ...Option) (any, error) {
-	strKey := keyToString(key)
-
-	// Apply options to get expiration
-	options := ApplyOptions(opts...)
-	expiration := options.Expiration
-	if expiration == 0 {
-		expiration = a.config.DefaultTTL
-	}
-	if expiration == 0 {
-		expiration = 24 * time.Hour
-	}
-
-	// Get lock TTL from config or use default
-	lockTTL := a.config.LockTTL
-	if lockTTL == 0 {
-		lockTTL = 10 * time.Second // Default lock TTL
-	}
-
-	// Use distributed locking for cache stampede prevention
-	return a.store.GetOrSetWithLock(ctx, strKey, loader, expiration, lockTTL)
-}
-
-// Type returns the cache backend type
-func (a *ValkeyAdapter) Type() CacheType {
-	return CacheValkey
-}
-
-// GetStats returns cache statistics
-func (a *ValkeyAdapter) GetStats(ctx context.Context) (*Stats, error) {
-	// Check health to determine connection status
-	if err := a.store.HealthCheck(ctx); err != nil {
-		return &Stats{
-			Type:      string(CacheValkey),
-			Connected: false,
-		}, nil
-	}
-
-	return &Stats{
-		Type:      string(CacheValkey),
-		Connected: true,
-	}, nil
-}
-
-// Close closes the Valkey connection
-func (a *ValkeyAdapter) Close() error {
-	if a.store == nil {
-		return nil
-	}
-	return a.store.Close()
-}
-
-// HealthCheck checks if Valkey is accessible
 func (a *ValkeyAdapter) HealthCheck(ctx context.Context) error {
 	if a.store == nil {
 		return errors.New("store is nil")
 	}
+
 	return a.store.HealthCheck(ctx)
+}
+
+func (a *ValkeyAdapter) GetStats(ctx context.Context) (*cache.Stats, error) {
+	return &cache.Stats{
+		Type:      "valkey",
+		Connected: a.store.HealthCheck(ctx) == nil,
+	}, nil
+}
+
+func (a *ValkeyAdapter) Close() error {
+	if a.store == nil {
+		return nil
+	}
+
+	return a.store.Close()
 }

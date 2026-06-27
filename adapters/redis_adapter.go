@@ -1,3 +1,5 @@
+// Deprecated: Use github.com/vinaycharlie01/nyro/adapters/redis instead.
+// This file is retained for backward compatibility and will be removed in v2.
 package cache_adapter
 
 import (
@@ -7,42 +9,34 @@ import (
 	"time"
 
 	goredis "github.com/redis/go-redis/v9"
-	"github.com/vinaycharlie01/nyro/stores/redis"
+	cache "github.com/vinaycharlie01/nyro"
+	"github.com/vinaycharlie01/nyro/config"
+	"github.com/vinaycharlie01/nyro/internal/keyutil"
+	redisstore "github.com/vinaycharlie01/nyro/stores/redis"
 )
 
-func init() {
-	// Register Redis cache factory
-	Register(CacheRedis, func(cfg Config) (Cache, error) {
-		redisConfig, ok := cfg.(*RedisConfig)
-		if !ok {
-			return nil, fmt.Errorf("invalid config type for Redis cache")
-		}
-		return NewRedisAdapter(*redisConfig)
-	})
-}
-
-// RedisAdapter implements Cache interface using custom Redis store
+// RedisAdapter implements cache.Cache using Redis.
+// Deprecated: Use adapters/redis.Adapter instead.
 type RedisAdapter struct {
-	store  *redis.RedisStore
-	config RedisConfig
+	store  *redisstore.RedisStore
+	cfg    config.RedisConfig
 }
 
-// NewRedisAdapter creates a new Redis adapter using custom store implementation
-func NewRedisAdapter(config RedisConfig) (*RedisAdapter, error) {
-	// Create Redis client
+// NewRedisAdapter creates a Redis-backed cache adapter.
+// Deprecated: Use adapters/redis.New instead.
+func NewRedisAdapter(cfg config.RedisConfig) (*RedisAdapter, error) {
 	client := goredis.NewClient(&goredis.Options{
-		Addr:         config.Addr,
-		Password:     config.Password,
-		DB:           config.DB,
-		PoolSize:     config.PoolSize,
-		MinIdleConns: config.MinIdleConns,
-		MaxRetries:   config.MaxRetries,
-		DialTimeout:  config.DialTimeout,
-		ReadTimeout:  config.ReadTimeout,
-		WriteTimeout: config.WriteTimeout,
+		Addr:         cfg.Addr,
+		Password:     cfg.Password,
+		DB:           cfg.DB,
+		PoolSize:     cfg.PoolSize,
+		MinIdleConns: cfg.MinIdleConns,
+		MaxRetries:   cfg.MaxRetries,
+		DialTimeout:  cfg.DialTimeout,
+		ReadTimeout:  cfg.ReadTimeout,
+		WriteTimeout: cfg.WriteTimeout,
 	})
 
-	// Test connection
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -50,195 +44,149 @@ func NewRedisAdapter(config RedisConfig) (*RedisAdapter, error) {
 		return nil, fmt.Errorf("failed to connect to Redis: %w", err)
 	}
 
-	// Create custom Redis store with configuration
-	var storeOpts []redis.RedisStoreOption
-	if config.LockTTL > 0 {
-		storeOpts = append(storeOpts, redis.WithLockTTL(config.LockTTL))
-	}
-	if config.LockMaxWait > 0 {
-		storeOpts = append(storeOpts, redis.WithLockMaxWait(config.LockMaxWait))
+	var storeOpts []redisstore.RedisStoreOption
+	if cfg.LockTTL > 0 {
+		storeOpts = append(storeOpts, redisstore.WithLockTTL(cfg.LockTTL))
 	}
 
-	store := redis.NewRedis(client, storeOpts...)
+	if cfg.LockMaxWait > 0 {
+		storeOpts = append(storeOpts, redisstore.WithLockMaxWait(cfg.LockMaxWait))
+	}
 
 	return &RedisAdapter{
-		store:  store,
-		config: config,
+		store: redisstore.NewRedis(client, storeOpts...),
+		cfg:   cfg,
 	}, nil
 }
 
-// Get retrieves a value from cache
 func (a *RedisAdapter) Get(ctx context.Context, key any) (any, error) {
-	strKey := keyToString(key)
-	return a.store.Get(ctx, strKey)
-
+	return a.store.Get(ctx, keyutil.ToString(key))
 }
 
-// Set stores a value in cache
-func (a *RedisAdapter) Set(ctx context.Context, key any, value any, options ...Option) error {
-	strKey := keyToString(key)
-
-	// Apply options to get expiration
-	opts := ApplyOptions(options...)
-	expiration := opts.Expiration
-	if expiration == 0 {
-		expiration = a.config.DefaultTTL
+func (a *RedisAdapter) Set(ctx context.Context, key any, value any, options ...cache.Option) error {
+	opts := cache.ApplyOptions(options...)
+	ttl := opts.Expiration
+	if ttl == 0 {
+		ttl = a.cfg.DefaultTTL
 	}
-	if expiration == 0 {
-		expiration = 24 * time.Hour // Default to 24 hours if not configured
+	if ttl == 0 {
+		ttl = 24 * time.Hour
 	}
 
-	return a.store.Set(ctx, strKey, value, expiration)
+	return a.store.Set(ctx, keyutil.ToString(key), value, ttl)
 }
 
-// Delete removes a key from cache
 func (a *RedisAdapter) Delete(ctx context.Context, key any) error {
-	strKey := keyToString(key)
-	return a.store.Delete(ctx, strKey)
+	return a.store.Delete(ctx, keyutil.ToString(key))
 }
 
-// Clear removes all keys from cache
 func (a *RedisAdapter) Clear(ctx context.Context) error {
 	return a.store.Clear(ctx)
 }
 
-// GetMulti retrieves multiple values from cache
+func (a *RedisAdapter) Exists(ctx context.Context, key any) (bool, error) {
+	return a.store.Exists(ctx, keyutil.ToString(key))
+}
+
+func (a *RedisAdapter) GetOrSet(ctx context.Context, key any, loader func(context.Context) (any, error), opts ...cache.Option) (any, error) {
+	options := cache.ApplyOptions(opts...)
+	ttl := options.Expiration
+	if ttl == 0 {
+		ttl = a.cfg.DefaultTTL
+	}
+	if ttl == 0 {
+		ttl = 24 * time.Hour
+	}
+
+	lockTTL := a.cfg.LockTTL
+	if lockTTL == 0 {
+		lockTTL = 10 * time.Second
+	}
+
+	return a.store.GetOrSetWithLock(ctx, keyutil.ToString(key), loader, ttl, lockTTL)
+}
+
 func (a *RedisAdapter) GetMulti(ctx context.Context, keys []any) (map[any]any, error) {
 	if len(keys) == 0 {
 		return make(map[any]any), nil
 	}
 
-	// Convert any keys to string keys
 	strKeys := make([]string, len(keys))
-	keyMap := make(map[string]any) // Map string key back to original key
+	keyMap := make(map[string]any, len(keys))
+
 	for i, key := range keys {
-		strKey := keyToString(key)
-		strKeys[i] = strKey
-		keyMap[strKey] = key
+		s := keyutil.ToString(key)
+		strKeys[i] = s
+		keyMap[s] = key
 	}
 
-	// Get from store
 	storeResult, err := a.store.GetMulti(ctx, strKeys)
 	if err != nil {
 		return nil, err
 	}
 
-	// Convert back to original key type
 	result := make(map[any]any, len(storeResult))
 	for strKey, value := range storeResult {
-		originalKey := keyMap[strKey]
-		result[originalKey] = value
+		result[keyMap[strKey]] = value
 	}
 
 	return result, nil
 }
 
-// SetMulti stores multiple values in cache
-func (a *RedisAdapter) SetMulti(ctx context.Context, items map[any]any, options ...Option) error {
+func (a *RedisAdapter) SetMulti(ctx context.Context, items map[any]any, options ...cache.Option) error {
 	if len(items) == 0 {
 		return nil
 	}
 
-	// Apply options to get expiration
-	opts := ApplyOptions(options...)
-	expiration := opts.Expiration
-	if expiration == 0 {
-		expiration = a.config.DefaultTTL
+	opts := cache.ApplyOptions(options...)
+	ttl := opts.Expiration
+	if ttl == 0 {
+		ttl = a.cfg.DefaultTTL
 	}
-	if expiration == 0 {
-		expiration = 24 * time.Hour
+	if ttl == 0 {
+		ttl = 24 * time.Hour
 	}
 
-	// Convert any keys to string keys
 	storeItems := make(map[string]any, len(items))
 	for key, value := range items {
-		strKey := keyToString(key)
-		storeItems[strKey] = value
+		storeItems[keyutil.ToString(key)] = value
 	}
 
-	return a.store.SetMulti(ctx, storeItems, expiration)
+	return a.store.SetMulti(ctx, storeItems, ttl)
 }
 
-// DeleteMulti removes multiple keys from cache
 func (a *RedisAdapter) DeleteMulti(ctx context.Context, keys []any) error {
 	if len(keys) == 0 {
 		return nil
 	}
 
-	// Convert any keys to string keys
 	strKeys := make([]string, len(keys))
 	for i, key := range keys {
-		strKeys[i] = keyToString(key)
+		strKeys[i] = keyutil.ToString(key)
 	}
 
 	return a.store.DeleteMulti(ctx, strKeys)
 }
 
-// Exists checks if a key exists in cache
-func (a *RedisAdapter) Exists(ctx context.Context, key any) (bool, error) {
-	strKey := keyToString(key)
-	return a.store.Exists(ctx, strKey)
-}
-
-// GetOrSet retrieves a value from cache, or sets it if not found
-// Uses distributed locking to prevent cache stampede
-func (a *RedisAdapter) GetOrSet(ctx context.Context, key any, loader func(context.Context) (any, error), opts ...Option) (any, error) {
-	strKey := keyToString(key)
-
-	// Apply options to get expiration
-	options := ApplyOptions(opts...)
-	expiration := options.Expiration
-	if expiration == 0 {
-		expiration = a.config.DefaultTTL
-	}
-	if expiration == 0 {
-		expiration = 24 * time.Hour
-	}
-
-	// Get lock TTL from config or use default
-	lockTTL := a.config.LockTTL
-	if lockTTL == 0 {
-		lockTTL = 10 * time.Second // Default lock TTL
-	}
-
-	// Use distributed locking for cache stampede prevention
-	return a.store.GetOrSetWithLock(ctx, strKey, loader, expiration, lockTTL)
-}
-
-// Type returns the cache backend type
-func (a *RedisAdapter) Type() CacheType {
-	return CacheRedis
-}
-
-// GetStats returns cache statistics
-func (a *RedisAdapter) GetStats(ctx context.Context) (*Stats, error) {
-	// Note: We need access to the underlying Redis client for stats
-	// For now, return basic stats based on health check
-	if err := a.store.HealthCheck(ctx); err != nil {
-		return &Stats{
-			Type:      string(CacheRedis),
-			Connected: false,
-		}, nil
-	}
-
-	return &Stats{
-		Type:      string(CacheRedis),
-		Connected: true,
-	}, nil
-}
-
-// Close closes the Redis connection
-func (a *RedisAdapter) Close() error {
-	if a.store == nil {
-		return nil
-	}
-	return a.store.Close()
-}
-
-// HealthCheck checks if Redis is accessible
 func (a *RedisAdapter) HealthCheck(ctx context.Context) error {
 	if a.store == nil {
 		return errors.New("store is nil")
 	}
+
 	return a.store.HealthCheck(ctx)
+}
+
+func (a *RedisAdapter) GetStats(ctx context.Context) (*cache.Stats, error) {
+	return &cache.Stats{
+		Type:      "redis",
+		Connected: a.store.HealthCheck(ctx) == nil,
+	}, nil
+}
+
+func (a *RedisAdapter) Close() error {
+	if a.store == nil {
+		return nil
+	}
+
+	return a.store.Close()
 }
