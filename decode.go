@@ -39,9 +39,3 @@ func Decode[T any](result any) (T, error) {
 
 	return target, nil
 }
-
-func zeroValue[T any]() T {
-	var zero T
-
-	return zero
-}

@@ -15,9 +15,11 @@ import (
 type CacheType string
 
 const (
-	CacheRedis  CacheType = "redis"
-	CacheValkey CacheType = "valkey"
-	CacheMemory CacheType = "memory"
+	CacheRedis     CacheType = "redis"
+	CacheValkey    CacheType = "valkey"
+	CacheMemory    CacheType = "memory"
+	CacheDragonfly CacheType = "dragonfly"
+	CacheKeyDB     CacheType = "keydb"
 )
 
 // Config is the interface that all cache backend configurations must implement.
@@ -132,6 +134,60 @@ func (c *ValkeyConfig) Client() (valkeygo.Client, error) {
 		Password:    c.Password,
 		SelectDB:    c.DB,
 	})
+}
+
+// DragonflyConfig holds Dragonfly connection and behaviour parameters.
+// Dragonfly is a modern, Redis-compatible in-memory data store and uses the
+// go-redis client — all fields mirror RedisConfig.
+type DragonflyConfig struct {
+	Addr         string        `yaml:"addr"           env:"DRAGONFLY_ADDR"`
+	Password     string        `yaml:"password"       env:"DRAGONFLY_PASSWORD"`
+	DB           int           `yaml:"db"             env:"DRAGONFLY_DB"`
+	PoolSize     int           `yaml:"pool_size"      env:"DRAGONFLY_POOL_SIZE"`
+	MinIdleConns int           `yaml:"min_idle_conns" env:"DRAGONFLY_MIN_IDLE_CONNS"`
+	MaxRetries   int           `yaml:"max_retries"    env:"DRAGONFLY_MAX_RETRIES"`
+	DialTimeout  time.Duration `yaml:"dial_timeout"   env:"DRAGONFLY_DIAL_TIMEOUT"`
+	ReadTimeout  time.Duration `yaml:"read_timeout"   env:"DRAGONFLY_READ_TIMEOUT"`
+	WriteTimeout time.Duration `yaml:"write_timeout"  env:"DRAGONFLY_WRITE_TIMEOUT"`
+	DefaultTTL   time.Duration `yaml:"default_ttl"    env:"DRAGONFLY_DEFAULT_TTL"`
+	LockTTL      time.Duration `yaml:"lock_ttl"       env:"DRAGONFLY_LOCK_TTL"`
+	LockMaxWait  time.Duration `yaml:"lock_max_wait"  env:"DRAGONFLY_LOCK_MAX_WAIT"`
+}
+
+// LoadFromEnv implements Config.
+func (c *DragonflyConfig) LoadFromEnv() error {
+	if err := env.Parse(c); err != nil {
+		return fmt.Errorf("failed to parse Dragonfly config from env: %w", err)
+	}
+
+	return nil
+}
+
+// KeyDBConfig holds KeyDB connection and behaviour parameters.
+// KeyDB is a multithreaded Redis-compatible store and uses the go-redis client —
+// all fields mirror RedisConfig.
+type KeyDBConfig struct {
+	Addr         string        `yaml:"addr"           env:"KEYDB_ADDR"`
+	Password     string        `yaml:"password"       env:"KEYDB_PASSWORD"`
+	DB           int           `yaml:"db"             env:"KEYDB_DB"`
+	PoolSize     int           `yaml:"pool_size"      env:"KEYDB_POOL_SIZE"`
+	MinIdleConns int           `yaml:"min_idle_conns" env:"KEYDB_MIN_IDLE_CONNS"`
+	MaxRetries   int           `yaml:"max_retries"    env:"KEYDB_MAX_RETRIES"`
+	DialTimeout  time.Duration `yaml:"dial_timeout"   env:"KEYDB_DIAL_TIMEOUT"`
+	ReadTimeout  time.Duration `yaml:"read_timeout"   env:"KEYDB_READ_TIMEOUT"`
+	WriteTimeout time.Duration `yaml:"write_timeout"  env:"KEYDB_WRITE_TIMEOUT"`
+	DefaultTTL   time.Duration `yaml:"default_ttl"    env:"KEYDB_DEFAULT_TTL"`
+	LockTTL      time.Duration `yaml:"lock_ttl"       env:"KEYDB_LOCK_TTL"`
+	LockMaxWait  time.Duration `yaml:"lock_max_wait"  env:"KEYDB_LOCK_MAX_WAIT"`
+}
+
+// LoadFromEnv implements Config.
+func (c *KeyDBConfig) LoadFromEnv() error {
+	if err := env.Parse(c); err != nil {
+		return fmt.Errorf("failed to parse KeyDB config from env: %w", err)
+	}
+
+	return nil
 }
 
 // MemoryConfig configures the in-memory adapter.
