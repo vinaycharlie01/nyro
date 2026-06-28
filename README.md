@@ -8,100 +8,104 @@ or add new ones with minimal effort — only an adapter needs to be implemented 
 ## Architecture
 
 nyro follows the Hexagonal Architecture pattern, keeping the core domain (the `Cache` port) completely
-decoupled from infrastructure concerns (adapters, stores, config).
+decoupled from infrastructure concerns (adapters, carts, config).
 
 ```mermaid
-graph TB
-    subgraph APP["Application Layer"]
-        CL["client.Client\n(entity-aware facade)"]
-        TC["TypedCache[T]\n(generic type-safe wrapper)"]
-    end
+flowchart LR
+    APP(["App / TypedCache[T]"]) --> CACHE(["cache.Cache"])
 
-    subgraph CORE["Domain / Port  (package cache)"]
-        CP["Cache\ninterface"]
-        OP["Options\n(TTL, Tags, Cost)"]
-        REG["Registry\n(init-based auto-register)"]
-    end
+    CACHE --> RA(["redis"])
+    CACHE --> VA(["valkey"])
+    CACHE --> MA(["memory"])
+    CACHE --> DA(["dragonfly"])
+    CACHE --> KA(["keydb"])
+    CACHE --> MCA(["memcached"])
+    CACHE --> OA(["olric"])
+    CACHE --> PA(["pebble"])
+    CACHE --> SA(["surrealdb"])
 
-    subgraph ADAPT["Driven Adapters  (adapters/*)"]
-        RA["adapters/redis\nRedis adapter"]
-        VA["adapters/valkey\nValkey adapter"]
-        MA["adapters/memory\nIn-memory adapter"]
-    end
-
-    subgraph INFRA["Infrastructure  (stores/*)"]
-        RS["stores/redis\nRedis client + distributed lock"]
-        VS["stores/valkey\nValkey client"]
-        MM["sync.Map + GC goroutine\n+ singleflight"]
-    end
-
-    subgraph CFG["Config"]
-        CF["config.Config"]
-        EC["config.EntityCacheConfig"]
-    end
-
-    CL -->|implements| CP
-    TC -->|wraps| CP
-    RA -->|implements| CP
-    VA -->|implements| CP
-    MA -->|implements| CP
-    RA --> RS
-    VA --> VS
-    MA --> MM
-    CL --> CF
-    CL --> EC
-    REG -.->|"_ import triggers\ninit() registration"| RA
-    REG -.-> VA
-    REG -.-> MA
+    RA  --> RC(["carts/redis"])
+    DA  --> RC
+    KA  --> RC
+    VA  --> VC(["carts/valkey"])
+    MCA --> MC(["carts/memcached"])
+    OA  --> OC(["carts/olric"])
+    PA  --> PC(["carts/pebble"])
+    SA  --> SC(["carts/surrealdb"])
 ```
+
+> `redis`, `dragonfly`, and `keydb` all share `carts/redis` — they speak the same RESP protocol.
+> `memory` is self-contained (no cart).
 
 ### Key Design Principles
 
 | Concept | Detail |
 |---------|--------|
 | **Port** | `cache.Cache` interface — the only contract the application knows about |
-| **Adapters** | Plug-in implementations: Redis, Valkey, Memory |
+| **Adapters** | Plug-in implementations for each backend; register via `init()` |
+| **Carts** | Low-level backend wrappers (protocol, locking, serialisation) shared across adapters |
 | **Registry** | Auto-register via Go `init()` side-effect imports — pay only for what you import |
 | **TypedCache[T]** | Generic wrapper eliminating `any`-based type assertions |
-| **Singleflight** | Memory adapter deduplicates concurrent `GetOrSet` calls for the same key |
-| **Entity Config** | Per-entity TTL, key prefix, and enabled/disabled flags via YAML or env |
+| **Singleflight** | Deduplicates concurrent `GetOrSet` calls per key in supported backends |
+| **Distributed Lock** | Heartbeat-renewed locks prevent cache stampede in Redis/Valkey/Dragonfly/KeyDB |
 
 ## Package Structure
 
 ```
 nyro/
 ├── cache.go              # Cache port (interface) + Stats + type registry
-├── decode.go             # Decode[T any] — JSON-aware value decoding
+├── decode.go             # Decode[T any] — JSON-aware value decoding helper
 ├── errors.go             # Sentinel errors: ErrNotFound, ErrBackendUnavailable
 ├── options.go            # Option system: WithExpiration, WithTTL, WithTags, WithCost
 ├── typed_cache.go        # TypedCache[T] — type-safe generic cache wrapper
 ├── magefile.go           # Nava Mage build file (mage test / lint / release)
 ├── go.yaml               # Nava Go config (test, race, coverage, bench, lint, vet)
 ├── goreleaser.yaml       # Nava goreleaser pointer config
-├── .goreleaser.yaml      # GoReleaser library release config
 ├── .golangci.yml         # golangci-lint configuration
 │
 ├── adapters/             # Driven adapters (implement cache.Cache)
-│   ├── redis/            # Redis adapter with init() auto-registration
-│   ├── valkey/           # Valkey adapter with init() auto-registration
-│   └── memory/           # In-memory adapter (singleflight + background GC)
+│   ├── redis/            # Redis adapter (auto-registers as "redis")
+│   ├── valkey/           # Valkey adapter (auto-registers as "valkey")
+│   ├── memory/           # In-memory adapter — singleflight + background GC
+│   ├── dragonfly/        # Dragonfly adapter — reuses Redis cart (RESP-compatible)
+│   ├── keydb/            # KeyDB adapter — reuses Redis cart (RESP-compatible)
+│   ├── memcached/        # Memcached adapter
+│   ├── olric/            # Olric distributed in-memory adapter
+│   ├── pebble/           # Pebble embedded KV adapter
+│   └── surrealdb/        # SurrealDB adapter
+│
+├── carts/                # Low-level backend wrappers (shared by adapters)
+│   ├── cart.go           # Cart + DistributedLocker interfaces
+│   ├── errors.go         # NotFound cart error
+│   ├── redis/            # Redis client + distributed lock + backoff
+│   ├── valkey/           # Valkey client + distributed lock
+│   ├── memcached/        # Memcached client + lock emulation
+│   ├── olric/            # Olric client + singleflight locking
+│   ├── pebble/           # Pebble embedded KV store
+│   └── surrealdb/        # SurrealDB client + lock
+│
+├── pkg/                  # Exported utilities
+│   └── decode.go         # Decode[T any] (importable from sub-packages)
 │
 ├── client/               # Application-level facade (entity-aware caching)
 │   └── client.go
 │
-├── config/               # Configuration (YAML/env loading, entity config)
-│   ├── config.go
-│   └── entity_config.go
-│
-├── stores/               # Low-level backend implementations
-│   ├── redis/            # Redis client + distributed locking + backoff
-│   ├── valkey/           # Valkey client
-│   └── store.go          # Store + DistributedLocker interfaces
+├── config/               # Configuration structs (YAML / env loading)
+│   ├── config.go         # Per-backend Config structs + registry New() helper
+│   └── entity_config.go  # Per-entity TTL, prefix, enabled flag
 │
 ├── internal/             # Shared utilities (not exported outside module)
 │   └── keyutil/          # Key → string conversion (string, int*, Stringer)
 │
 ├── cachefakes/           # Counterfeiter-generated Cache mock
+│
+├── test/                 # Integration tests (require -tags integration)
+│   ├── test-containers/  # Testcontainer helpers (Redis, Dragonfly, KeyDB, MSSQL)
+│   └── integration/
+│       ├── redis/        # Redis integration tests
+│       ├── dragonfly/    # Dragonfly integration tests
+│       └── keydb/        # KeyDB integration tests
+│
 └── examples/             # Runnable usage examples
     ├── basic/            # In-memory adapter quick-start
     └── typed/            # TypedCache[T] generic wrapper example
@@ -121,13 +125,14 @@ go get github.com/vinaycharlie01/nyro
 import (
     cache "github.com/vinaycharlie01/nyro"
     _ "github.com/vinaycharlie01/nyro/adapters/memory" // registers Memory adapter
+    "github.com/vinaycharlie01/nyro/config"
 )
 
-c, _ := cache.New(cache.CacheMemory, nil)
+c, _ := config.New(config.CacheMemory, &config.MemoryConfig{})
 defer c.Close()
 
 ctx := context.Background()
-c.Set(ctx, "key", "value", cache.WithExpiration(time.Minute))
+c.Set(ctx, "key", "value", cache.WithTTL(time.Minute))
 val, err := c.Get(ctx, "key")
 ```
 
@@ -135,22 +140,120 @@ val, err := c.Get(ctx, "key")
 
 ```go
 import (
-    cache "github.com/vinaycharlie01/nyro"
+    _ "github.com/vinaycharlie01/nyro/adapters/redis"
     "github.com/vinaycharlie01/nyro/config"
-    _ "github.com/vinaycharlie01/nyro/adapters/redis" // registers Redis adapter
 )
 
-c, err := cache.New(cache.CacheRedis, &config.RedisConfig{
-    Addr:     "localhost:6379",
-    Password: "",
-    DB:       0,
+c, err := config.New(config.CacheRedis, &config.RedisConfig{
+    Addr:       "localhost:6379",
+    DefaultTTL: 30 * time.Minute,
+    LockTTL:    10 * time.Second,
 })
 if err != nil {
     log.Fatal(err)
 }
 defer c.Close()
 
-c.Set(ctx, "session:abc", sessionData, cache.WithExpiration(30*time.Minute))
+c.Set(ctx, "session:abc", sessionData, cache.WithTTL(30*time.Minute))
+```
+
+### Dragonfly (Redis-compatible, drop-in replacement)
+
+```go
+import (
+    _ "github.com/vinaycharlie01/nyro/adapters/dragonfly"
+    "github.com/vinaycharlie01/nyro/config"
+)
+
+c, err := config.New(config.CacheDragonfly, &config.DragonflyConfig{
+    Addr:       "localhost:6379",
+    DefaultTTL: 30 * time.Minute,
+})
+```
+
+### KeyDB (multithreaded Redis-compatible)
+
+```go
+import (
+    _ "github.com/vinaycharlie01/nyro/adapters/keydb"
+    "github.com/vinaycharlie01/nyro/config"
+)
+
+c, err := config.New(config.CacheKeyDB, &config.KeyDBConfig{
+    Addr:       "localhost:6379",
+    DefaultTTL: 30 * time.Minute,
+})
+```
+
+### Valkey
+
+```go
+import (
+    _ "github.com/vinaycharlie01/nyro/adapters/valkey"
+    "github.com/vinaycharlie01/nyro/config"
+)
+
+c, err := config.New(config.CacheValkey, &config.ValkeyConfig{
+    Addr:       "localhost:6379",
+    DefaultTTL: 30 * time.Minute,
+})
+```
+
+### Memcached
+
+```go
+import (
+    _ "github.com/vinaycharlie01/nyro/adapters/memcached"
+    "github.com/vinaycharlie01/nyro/config"
+)
+
+c, err := config.New(config.CacheMemcached, &config.MemcachedConfig{
+    Addrs:      []string{"localhost:11211"},
+    DefaultTTL: 30 * time.Minute,
+})
+```
+
+### Olric (distributed in-process)
+
+```go
+import (
+    _ "github.com/vinaycharlie01/nyro/adapters/olric"
+    "github.com/vinaycharlie01/nyro/config"
+)
+
+c, err := config.New(config.CacheOlric, &config.OlricConfig{
+    DefaultTTL: 30 * time.Minute,
+})
+```
+
+### Pebble (embedded KV, no external server)
+
+```go
+import (
+    _ "github.com/vinaycharlie01/nyro/adapters/pebble"
+    "github.com/vinaycharlie01/nyro/config"
+)
+
+c, err := config.New(config.CachePebble, &config.PebbleConfig{
+    Path:       "./cache_data",
+    DefaultTTL: 24 * time.Hour,
+})
+```
+
+### SurrealDB
+
+```go
+import (
+    _ "github.com/vinaycharlie01/nyro/adapters/surrealdb"
+    "github.com/vinaycharlie01/nyro/config"
+)
+
+c, err := config.New(config.CacheSurrealDB, &config.SurrealDBConfig{
+    Addr:       "ws://localhost:8000/rpc",
+    Namespace:  "myapp",
+    Database:   "cache",
+    DefaultTTL: 24 * time.Hour,
+})
 ```
 
 ### Typed Cache — no type assertions
@@ -166,10 +269,10 @@ type User struct {
     Name string
 }
 
-base, _ := cache.New(cache.CacheMemory, nil)
+base, _ := config.New(config.CacheMemory, &config.MemoryConfig{})
 tc := cache.NewTypedCache[User](base)
 
-tc.Set(ctx, "user:1", User{ID: 1, Name: "Alice"}, cache.WithExpiration(time.Hour))
+tc.Set(ctx, "user:1", User{ID: 1, Name: "Alice"}, cache.WithTTL(time.Hour))
 user, err := tc.Get(ctx, "user:1") // user is User — fully typed
 ```
 
@@ -177,27 +280,22 @@ user, err := tc.Get(ctx, "user:1") // user is User — fully typed
 
 ```go
 // loader is called exactly once even under concurrent requests for the same key
-val, err := c.GetOrSet(ctx, "expensive-key", func() (any, error) {
+val, err := c.GetOrSet(ctx, "expensive-key", func(ctx context.Context) (any, error) {
     return fetchFromDB(ctx, id)
-}, cache.WithExpiration(5*time.Minute))
+}, cache.WithTTL(5*time.Minute))
 ```
 
-### Entity-Aware Client
+### Decode Helper
+
+`cache.Decode[T]` converts a value returned by the `Cache` interface back to a concrete type,
+handling both in-process values and JSON-deserialized maps from remote backends:
 
 ```go
-import (
-    "github.com/vinaycharlie01/nyro/client"
-    "github.com/vinaycharlie01/nyro/config"
-    _ "github.com/vinaycharlie01/nyro/adapters/redis"
-)
-
-cfg := &config.Config{
-    CacheType: config.CacheRedis,
-    Redis:     config.RedisConfig{Addr: "localhost:6379"},
+result, err := c.GetOrSet(ctx, "users", loader, cache.WithTTL(5*time.Minute))
+if err != nil {
+    return nil, err
 }
-
-cl, err := client.New(cfg)
-// per-entity TTL, key prefix, and enabled/disabled loaded from config
+users, err := cache.Decode[[]*domain.User](result)
 ```
 
 ## Options
@@ -208,35 +306,78 @@ cl, err := client.New(cfg)
 | `WithTTL(d time.Duration)` | Alias for `WithExpiration` |
 | `WithTags(tags ...string)` | Attach tags (backend-specific invalidation) |
 | `WithCost(n int64)` | Memory cost hint for eviction (backend-specific) |
-| `WithClientSideCaching()` | Enable client-side caching (Valkey) |
 
 ## Adapters
 
-| Backend | Import path | Notes |
-|---------|-------------|-------|
-| Redis | `adapters/redis` | Distributed locking, configurable backoff, heartbeat renewal |
-| Valkey | `adapters/valkey` | Client-side caching support |
-| Memory | `adapters/memory` | Singleflight dedup, background GC, zero dependencies |
+| Backend | Import path | Config type | Notes |
+|---------|-------------|-------------|-------|
+| Redis | `adapters/redis` | `RedisConfig` | Distributed lock, heartbeat renewal, backoff |
+| Valkey | `adapters/valkey` | `ValkeyConfig` | Redis-compatible, client-side caching support |
+| Memory | `adapters/memory` | `MemoryConfig` | Singleflight dedup, background GC, zero deps |
+| Dragonfly | `adapters/dragonfly` | `DragonflyConfig` | Modern Redis-compatible store; reuses Redis cart |
+| KeyDB | `adapters/keydb` | `KeyDBConfig` | Multithreaded Redis-compatible; reuses Redis cart |
+| Memcached | `adapters/memcached` | `MemcachedConfig` | Classic distributed cache |
+| Olric | `adapters/olric` | `OlricConfig` | Distributed in-process store; singleflight locking |
+| Pebble | `adapters/pebble` | `PebbleConfig` | CockroachDB Pebble embedded KV; no external server |
+| SurrealDB | `adapters/surrealdb` | `SurrealDBConfig` | Multi-model database used as cache backend |
+
+## Carts
+
+Carts are low-level backend wrappers that handle the protocol, serialisation, and distributed
+locking details. Adapters compose a cart rather than owning the client directly, which allows
+multiple adapters to share the same cart (e.g. both the Redis and Dragonfly adapters use
+`carts/redis.RedisCart`).
+
+| Cart | Implements | Notes |
+|------|-----------|-------|
+| `carts/redis` | `Cart` + `DistributedLocker` | Lua-script-based atomic lock, heartbeat goroutine |
+| `carts/valkey` | `Cart` + `DistributedLocker` | Valkey native client |
+| `carts/memcached` | `Cart` | Lock emulation via Add/Delete semantics |
+| `carts/olric` | `Cart` + `DistributedLocker` | Olric native lock API + singleflight |
+| `carts/pebble` | `Cart` | Batch writes, iterator-based Clear, TTL via entry metadata |
+| `carts/surrealdb` | `Cart` + `DistributedLocker` | WebSocket-based SurrealDB client |
 
 ### Adding a New Adapter
 
 1. Create `adapters/yourbackend/adapter.go`
-2. Implement the `cache.Cache` interface
-3. Register in `init()` so side-effect import triggers it:
+2. Implement the `cache.Cache` interface (delegate to an existing or new cart)
+3. Register in `init()`:
 
 ```go
 package yourbackend
 
-import cache "github.com/vinaycharlie01/nyro"
+import (
+    cache "github.com/vinaycharlie01/nyro"
+    nyroconfig "github.com/vinaycharlie01/nyro/config"
+)
 
 func init() {
-    cache.Register(cache.CacheType("yourbackend"), func(cfg any) (cache.Cache, error) {
-        // cast cfg to your config type, construct and return
+    nyroconfig.Register(nyroconfig.CacheType("yourbackend"), func(cfg nyroconfig.Config) (cache.Cache, error) {
+        yc, ok := cfg.(*nyroconfig.YourBackendConfig)
+        if !ok {
+            return nil, fmt.Errorf("yourbackend: expected *config.YourBackendConfig, got %T", cfg)
+        }
+        return New(*yc)
     })
 }
 ```
 
 4. Import with `_ "github.com/vinaycharlie01/nyro/adapters/yourbackend"` — no other changes needed.
+
+## Configuration via Environment Variables
+
+All config structs support loading from environment variables via the `env` struct tag.
+
+| Backend | Env prefix | Example |
+|---------|-----------|---------|
+| Redis | `REDIS_` | `REDIS_ADDR=localhost:6379` |
+| Valkey | `VALKEY_` | `VALKEY_ADDR=localhost:6379` |
+| Dragonfly | `DRAGONFLY_` | `DRAGONFLY_ADDR=localhost:6379` |
+| KeyDB | `KEYDB_` | `KEYDB_ADDR=localhost:6379` |
+| Memcached | `MEMCACHED_` | `MEMCACHED_ADDRS=localhost:11211` |
+
+Call `config.New(cacheType, cfg)` — it calls `cfg.LoadFromEnv()` automatically before
+constructing the adapter, so env vars can override programmatic defaults.
 
 ## Development
 
@@ -246,6 +387,7 @@ func init() {
 - [Mage](https://magefile.org/): `go install github.com/magefile/mage@latest`
 - golangci-lint: `go install github.com/golangci/golangci-lint/cmd/golangci-lint@v2.12.2`
 - govulncheck (optional): `go install golang.org/x/vuln/cmd/govulncheck@latest`
+- Docker (for integration tests via testcontainers)
 
 ### Setup
 
@@ -282,10 +424,17 @@ mage test
 go test ./...
 ```
 
-Valkey integration tests are skipped by default and need a live Valkey server:
+Integration tests spin up real containers via [testcontainers-go](https://testcontainers.com/):
 
 ```bash
-VALKEY_ADDR=localhost:6379 go test ./adapters/valkey/... -run TestAdapter
+# Redis integration tests
+go test -tags integration ./test/integration/redis/...
+
+# Dragonfly integration tests
+go test -tags integration ./test/integration/dragonfly/...
+
+# KeyDB integration tests
+go test -tags integration ./test/integration/keydb/...
 ```
 
 ### Generating Mocks
