@@ -22,6 +22,8 @@ const (
 	DefaultLockTTL = 10 * time.Second
 	// DefaultLockMaxWait is the default maximum wait time for acquiring a lock.
 	DefaultLockMaxWait = 30 * time.Second
+
+	lockRetryDelay = 100 * time.Millisecond
 )
 
 // OlricClientInterface defines the interface for Olric client operations.
@@ -111,6 +113,7 @@ func (oc *OlricCart) Get(ctx context.Context, key string) (any, error) {
 		if errors.Is(err, olric.ErrKeyNotFound) {
 			return nil, cart.NotFoundWithCause(err)
 		}
+
 		return nil, fmt.Errorf("olric: get failed: %w", err)
 	}
 
@@ -148,6 +151,7 @@ func (oc *OlricCart) Exists(ctx context.Context, key string) (bool, error) {
 		if errors.Is(err, olric.ErrKeyNotFound) {
 			return false, nil
 		}
+
 		return false, fmt.Errorf("olric: exists check failed: %w", err)
 	}
 
@@ -165,6 +169,7 @@ func (oc *OlricCart) GetMulti(ctx context.Context, keys []string) (map[string]an
 			if errors.As(err, &notFound) {
 				continue
 			}
+
 			return nil, err
 		}
 		result[key] = value
@@ -244,12 +249,13 @@ func (oc *OlricCart) AcquireLock(ctx context.Context, key string, ttl time.Durat
 		if errors.Is(err, olric.ErrLockNotAcquired) {
 			return "", false, nil
 		}
+
 		return "", false, fmt.Errorf("failed to acquire lock: %w", err)
 	}
 
 	// Store lock context for cleanup
 	oc.locksMu.Lock()
-	oc.locks[key] = func() {
+	oc.locks[key] = func() { //nolint:contextcheck
 		_ = lockCtx.Unlock(context.Background())
 	}
 	oc.locksMu.Unlock()
@@ -277,7 +283,7 @@ func (oc *OlricCart) ReleaseLock(ctx context.Context, key string, lockValue stri
 func (oc *OlricCart) ExtendLock(ctx context.Context, key string, lockValue string, ttl time.Duration) (bool, error) {
 	// Olric doesn't support extending locks directly
 	// We need to release and reacquire
-	oc.ReleaseLock(ctx, key, lockValue)
+	_ = oc.ReleaseLock(ctx, key, lockValue)
 
 	newLockValue, acquired, err := oc.AcquireLock(ctx, key, ttl)
 	if err != nil {
@@ -295,7 +301,12 @@ func (oc *OlricCart) ExtendLock(ctx context.Context, key string, lockValue strin
 }
 
 // GetOrSetWithLock retrieves a value or sets it using a loader function with distributed locking.
-func (oc *OlricCart) GetOrSetWithLock(ctx context.Context, key string, loader func(context.Context) (any, error), ttl, lockTTL time.Duration) (any, error) {
+func (oc *OlricCart) GetOrSetWithLock(
+	ctx context.Context,
+	key string,
+	loader func(context.Context) (any, error),
+	ttl, lockTTL time.Duration,
+) (any, error) {
 	// Try to get the value first
 	value, err := oc.Get(ctx, key)
 	if err == nil {
@@ -328,11 +339,12 @@ func (oc *OlricCart) GetOrSetWithLock(ctx context.Context, key string, loader fu
 
 		if !acquired {
 			// Wait and retry
-			time.Sleep(100 * time.Millisecond)
+			time.Sleep(lockRetryDelay)
+
 			return oc.Get(ctx, key)
 		}
 
-		defer oc.ReleaseLock(ctx, key, lockValue)
+		defer func() { _ = oc.ReleaseLock(ctx, key, lockValue) }()
 
 		// Triple-check after acquiring lock
 		value, err = oc.Get(ctx, key)
@@ -366,5 +378,6 @@ func (oc *OlricCart) GetOrSetWithLock(ctx context.Context, key string, loader fu
 func generateLockValue() string {
 	b := make([]byte, 16)
 	_, _ = rand.Read(b)
+
 	return hex.EncodeToString(b)
 }

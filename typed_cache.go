@@ -141,5 +141,6 @@ func (tc *TypedCache[T]) Unwrap() Cache {
 // ZeroValue returns the zero value for type T.
 func ZeroValue[T any]() T {
 	var zero T
+
 	return zero
 }

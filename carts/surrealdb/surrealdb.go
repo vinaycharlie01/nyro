@@ -27,6 +27,7 @@ const (
 	lockValueBytes            = 16
 	defaultLockMultiplier     = 2.0
 	lockRenewalDivisor        = 3
+	defaultReleaseLockTimeout = 5 * time.Second
 
 	defaultNamespace = "cache"
 	defaultDatabase  = "nyro"
@@ -173,6 +174,7 @@ func (sc *SurrealDBCart) Get(ctx context.Context, key string) (any, error) {
 	if time.Now().After(entry.Expiration) {
 		// Delete expired entry
 		_, _ = surrealdb.Delete[CacheEntry](ctx, sc.client, recordID)
+
 		return nil, cart.NotFoundWithCause(errors.New("key expired"))
 	}
 
@@ -409,7 +411,7 @@ func (sc *SurrealDBCart) getOrSetWithLock(
 	}
 
 	defer func() {
-		releaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		releaseCtx, cancel := context.WithTimeout(context.Background(), defaultReleaseLockTimeout)
 		defer cancel()
 
 		_ = sc.ReleaseLock(releaseCtx, key, lockValue)

@@ -52,14 +52,15 @@ func New(addr, namespace, database, table string, defaultTTL time.Duration, opts
 
 	// Create SurrealDB client
 	ctx := context.Background()
-	client, err := surrealdb.New(addr)
+	client, err := surrealdb.New(addr) //nolint:staticcheck
 	if err != nil {
 		return nil, err
 	}
 
 	// Use namespace and database
 	if err := client.Use(ctx, namespace, database); err != nil {
-		client.Close(ctx)
+		_ = client.Close(ctx)
+
 		return nil, err
 	}
 
@@ -70,7 +71,8 @@ func New(addr, namespace, database, table string, defaultTTL time.Duration, opts
 
 	cart, err := surrealdbcart.NewSurrealDB(client, allOpts...)
 	if err != nil {
-		client.Close(ctx)
+		_ = client.Close(ctx)
+
 		return nil, err
 	}
 

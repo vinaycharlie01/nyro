@@ -27,6 +27,7 @@ const (
 	lockValueBytes            = 16
 	defaultLockMultiplier     = 2.0
 	lockRenewalDivisor        = 3
+	defaultReleaseLockTimeout = 5 * time.Second
 )
 
 // MemcachedCartConfig holds configuration for the Memcached cart backend.
@@ -67,7 +68,7 @@ type MemcachedClientInterface interface {
 	Ping() error
 }
 
-// Ensure *memcache.Client implements MemcachedClientInterface
+// Ensure *memcache.Client implements MemcachedClientInterface.
 var _ MemcachedClientInterface = (*memcache.Client)(nil)
 
 // MemcachedCart implements cart.Cart and cart.DistributedLocker for Memcached.
@@ -353,11 +354,10 @@ func (mc *MemcachedCart) getOrSetWithLock(
 	}
 
 	defer func() {
-		releaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		releaseCtx, cancel := context.WithTimeout(context.Background(), defaultReleaseLockTimeout)
 		defer cancel()
 
 		if releaseErr := mc.ReleaseLock(releaseCtx, key, lockValue); releaseErr != nil {
-			// Log error but don't fail
 			_ = releaseErr
 		}
 	}()

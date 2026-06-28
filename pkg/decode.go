@@ -43,21 +43,21 @@ func Decode[T any](result any) (T, error) {
 		return target, nil
 	}
 
-	// Fast path: direct type assertion
-	// This succeeds when the value comes from in-memory cache or cache miss
+	// Fast path: direct type assertion.
+	// This succeeds when the value comes from in-memory cache or cache miss.
 	if value, ok := result.(T); ok {
 		return value, nil
 	}
 
-	// Fallback: convert generic cache payloads
-	// Redis returns values as map[string]any or []any after JSON decode
+	// Fallback: convert generic cache payloads.
+	// Redis returns values as map[string]any or []any after JSON decode.
 	data, err := json.Marshal(result)
 	if err != nil {
 		return target, fmt.Errorf("cache: failed to marshal cached value: %w", err)
 	}
 
 	if err := json.Unmarshal(data, &target); err != nil {
-		return target, fmt.Errorf("cache: invalid cached payload: %w", err)
+		return target, fmt.Errorf("cache: type mismatch in cached payload: %w", err)
 	}
 
 	return target, nil

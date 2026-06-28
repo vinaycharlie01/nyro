@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	cache "github.com/vinaycharlie01/nyro"
+	cache "github.com/vinaycharlie01/nyro/pkg"
 )
 
 func TestDecodeString(t *testing.T) {

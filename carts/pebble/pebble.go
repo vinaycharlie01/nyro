@@ -51,9 +51,10 @@ func (pc *PebbleCart) Get(ctx context.Context, key string) (any, error) {
 		if errors.Is(err, pebble.ErrNotFound) {
 			return nil, cart.NotFoundWithCause(err)
 		}
+
 		return nil, fmt.Errorf("pebble: get failed: %w", err)
 	}
-	defer closer.Close()
+	defer closer.Close() //nolint:errcheck
 
 	var entry CacheEntry
 	if err := json.Unmarshal(value, &entry); err != nil {
@@ -64,6 +65,7 @@ func (pc *PebbleCart) Get(ctx context.Context, key string) (any, error) {
 	if time.Now().After(entry.Expiration) {
 		// Delete expired entry
 		_ = pc.db.Delete([]byte(key), pebble.Sync)
+
 		return nil, cart.NotFoundWithCause(errors.New("key expired"))
 	}
 
@@ -105,9 +107,10 @@ func (pc *PebbleCart) Exists(ctx context.Context, key string) (bool, error) {
 		if errors.Is(err, pebble.ErrNotFound) {
 			return false, nil
 		}
+
 		return false, fmt.Errorf("pebble: exists check failed: %w", err)
 	}
-	closer.Close()
+	_ = closer.Close()
 
 	return true, nil
 }
@@ -123,6 +126,7 @@ func (pc *PebbleCart) GetMulti(ctx context.Context, keys []string) (map[string]a
 			if errors.As(err, &notFound) {
 				continue
 			}
+
 			return nil, err
 		}
 		result[key] = value
@@ -134,7 +138,7 @@ func (pc *PebbleCart) GetMulti(ctx context.Context, keys []string) (map[string]a
 // SetMulti stores multiple values in the cache.
 func (pc *PebbleCart) SetMulti(ctx context.Context, items map[string]any, expiration time.Duration) error {
 	batch := pc.db.NewBatch()
-	defer batch.Close()
+	defer batch.Close() //nolint:errcheck
 
 	for key, value := range items {
 		entry := CacheEntry{
@@ -162,7 +166,7 @@ func (pc *PebbleCart) SetMulti(ctx context.Context, items map[string]any, expira
 // DeleteMulti removes multiple values from the cache.
 func (pc *PebbleCart) DeleteMulti(ctx context.Context, keys []string) error {
 	batch := pc.db.NewBatch()
-	defer batch.Close()
+	defer batch.Close() //nolint:errcheck
 
 	for _, key := range keys {
 		if err := batch.Delete([]byte(key), pebble.Sync); err != nil {
@@ -184,10 +188,10 @@ func (pc *PebbleCart) Clear(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("pebble: iterator creation failed: %w", err)
 	}
-	defer iter.Close()
+	defer iter.Close() //nolint:errcheck
 
 	batch := pc.db.NewBatch()
-	defer batch.Close()
+	defer batch.Close() //nolint:errcheck
 
 	for iter.First(); iter.Valid(); iter.Next() {
 		if err := batch.Delete(iter.Key(), pebble.Sync); err != nil {
