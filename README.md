@@ -12,26 +12,30 @@ decoupled from infrastructure concerns (adapters, carts, config).
 
 ```mermaid
 flowchart LR
-    App --> Cache
-    Cache --> redis
-    Cache --> valkey
-    Cache --> memory
-    Cache --> dragonfly
-    Cache --> keydb
-    Cache --> memcached
-    Cache --> olric
-    Cache --> pebble
-    Cache --> surrealdb
+    APP(["App / TypedCache[T]"]) --> CACHE(["cache.Cache"])
 
-    redis --> carts/redis
-    valkey --> carts/valkey
-    dragonfly --> carts/redis
-    keydb --> carts/redis
-    memcached --> carts/memcached
-    olric --> carts/olric
-    pebble --> carts/pebble
-    surrealdb --> carts/surrealdb
+    CACHE --> RA(["redis"])
+    CACHE --> VA(["valkey"])
+    CACHE --> MA(["memory"])
+    CACHE --> DA(["dragonfly"])
+    CACHE --> KA(["keydb"])
+    CACHE --> MCA(["memcached"])
+    CACHE --> OA(["olric"])
+    CACHE --> PA(["pebble"])
+    CACHE --> SA(["surrealdb"])
+
+    RA  --> RC(["carts/redis"])
+    DA  --> RC
+    KA  --> RC
+    VA  --> VC(["carts/valkey"])
+    MCA --> MC(["carts/memcached"])
+    OA  --> OC(["carts/olric"])
+    PA  --> PC(["carts/pebble"])
+    SA  --> SC(["carts/surrealdb"])
 ```
+
+> `redis`, `dragonfly`, and `keydb` all share `carts/redis` — they speak the same RESP protocol.
+> `memory` is self-contained (no cart).
 
 ### Key Design Principles
 
