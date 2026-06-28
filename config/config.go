@@ -20,6 +20,7 @@ const (
 	CacheMemory    CacheType = "memory"
 	CacheDragonfly CacheType = "dragonfly"
 	CacheKeyDB     CacheType = "keydb"
+	CacheRistretto CacheType = "ristretto"
 )
 
 // Config is the interface that all cache backend configurations must implement.
@@ -187,6 +188,26 @@ func (c *KeyDBConfig) LoadFromEnv() error {
 		return fmt.Errorf("failed to parse KeyDB config from env: %w", err)
 	}
 
+	return nil
+}
+
+// RistrettoConfig configures the Ristretto-backed adapter.
+type RistrettoConfig struct {
+	// NumCounters is the number of access counters to keep (10x max unique keys).
+	NumCounters int64 `yaml:"num_counters" env:"RISTRETTO_NUM_COUNTERS"`
+	// MaxCost is the maximum cost of the cache (roughly max memory in bytes).
+	MaxCost int64 `yaml:"max_cost" env:"RISTRETTO_MAX_COST"`
+	// BufferItems is the number of items per internal buffer.
+	BufferItems int64 `yaml:"buffer_items" env:"RISTRETTO_BUFFER_ITEMS"`
+	// DefaultTTL is applied when Set/SetMulti are called without an explicit TTL.
+	DefaultTTL time.Duration `yaml:"default_ttl" env:"RISTRETTO_DEFAULT_TTL"`
+}
+
+// LoadFromEnv implements Config.
+func (c *RistrettoConfig) LoadFromEnv() error {
+	if err := env.Parse(c); err != nil {
+		return fmt.Errorf("failed to parse Ristretto config from env: %w", err)
+	}
 	return nil
 }
 

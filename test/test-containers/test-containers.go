@@ -22,6 +22,7 @@ import (
 	dragonflyAdapter "github.com/vinaycharlie01/nyro/adapters/dragonfly"
 	keydbAdapter "github.com/vinaycharlie01/nyro/adapters/keydb"
 	redisadapter "github.com/vinaycharlie01/nyro/adapters/redis"
+	valkeyAdapter "github.com/vinaycharlie01/nyro/adapters/valkey"
 	nyroconfig "github.com/vinaycharlie01/nyro/config"
 )
 
@@ -554,4 +555,101 @@ func (k *KeyDBContainer) SetupKeyDBContainer(t testing.TB) *KeyDBContainer {
 // SetupKeyDBContainer is a convenience function for quick KeyDB setup.
 func SetupKeyDBContainer(t testing.TB) *KeyDBContainer {
 	return NewKeyDBContainer().SetupKeyDBContainer(t)
+}
+
+// =============================================================================
+// Valkey Testcontainer Setup
+// =============================================================================
+
+// ValkeyContainer holds Valkey container instance and connection details.
+type ValkeyContainer struct {
+	container    testcontainers.Container
+	addr         string
+	image        string
+	cacheAdapter cache.Cache
+}
+
+// GetAddr returns the Valkey address.
+func (v *ValkeyContainer) GetAddr() string {
+	return v.addr
+}
+
+// GetCacheAdapter returns the cache adapter.
+func (v *ValkeyContainer) GetCacheAdapter() cache.Cache {
+	return v.cacheAdapter
+}
+
+// WithImage sets a custom Valkey image (optional).
+// Default: valkey/valkey:7-alpine.
+func (v *ValkeyContainer) WithImage(image string) *ValkeyContainer {
+	v.image = image
+
+	return v
+}
+
+// NewValkeyContainer creates a new Valkey container builder.
+func NewValkeyContainer() *ValkeyContainer {
+	return &ValkeyContainer{
+		image: "valkey/valkey:7-alpine",
+	}
+}
+
+// SetupValkeyContainer starts a Valkey container and wires up the cache adapter.
+func (v *ValkeyContainer) SetupValkeyContainer(t testing.TB) *ValkeyContainer {
+	t.Helper()
+
+	ctx := context.Background()
+
+	req := testcontainers.ContainerRequest{
+		Image:        v.image,
+		ExposedPorts: []string{"6379/tcp"},
+		WaitingFor:   wait.ForListeningPort("6379/tcp"),
+	}
+
+	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+		ContainerRequest: req,
+		Started:          true,
+	})
+	require.NoError(t, err, "failed to start Valkey container")
+
+	host, err := container.Host(ctx)
+	require.NoError(t, err, "failed to get Valkey host")
+
+	port, err := container.MappedPort(ctx, "6379/tcp")
+	require.NoError(t, err, "failed to get Valkey port")
+
+	addr := fmt.Sprintf("%s:%s", host, port.Port())
+
+	adapter, err := valkeyAdapter.New(nyroconfig.ValkeyConfig{
+		Addr:        addr,
+		DefaultTTL:  30 * time.Minute,
+		LockTTL:     10 * time.Second,
+		LockMaxWait: 3 * time.Second,
+	})
+	require.NoError(t, err, "failed to create Valkey cache adapter")
+
+	v.container = container
+	v.addr = addr
+	v.cacheAdapter = adapter
+
+	t.Cleanup(func() {
+		if v.cacheAdapter != nil {
+			_ = v.cacheAdapter.Close()
+		}
+
+		if v.container != nil {
+			if err := v.container.Terminate(ctx); err != nil {
+				t.Logf("Warning: failed to terminate Valkey container: %v", err)
+			}
+		}
+	})
+
+	t.Logf("✅ Valkey container started: %s", addr)
+
+	return v
+}
+
+// SetupValkeyContainer is a convenience function for quick Valkey setup.
+func SetupValkeyContainer(t testing.TB) *ValkeyContainer {
+	return NewValkeyContainer().SetupValkeyContainer(t)
 }
