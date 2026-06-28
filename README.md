@@ -11,72 +11,26 @@ nyro follows the Hexagonal Architecture pattern, keeping the core domain (the `C
 decoupled from infrastructure concerns (adapters, carts, config).
 
 ```mermaid
-graph TB
-    subgraph APP["Application Layer"]
-        CL["client.Client\n(entity-aware facade)"]
-        TC["TypedCache[T]\n(generic type-safe wrapper)"]
-    end
+flowchart LR
+    App --> Cache
+    Cache --> redis
+    Cache --> valkey
+    Cache --> memory
+    Cache --> dragonfly
+    Cache --> keydb
+    Cache --> memcached
+    Cache --> olric
+    Cache --> pebble
+    Cache --> surrealdb
 
-    subgraph CORE["Domain / Port  (package cache)"]
-        CP["Cache\ninterface"]
-        OP["Options\n(TTL, Tags, Cost)"]
-        REG["Registry\n(init-based auto-register)"]
-    end
-
-    subgraph ADAPT["Driven Adapters  (adapters/*)"]
-        RA["adapters/redis"]
-        VA["adapters/valkey"]
-        MA["adapters/memory"]
-        DA["adapters/dragonfly"]
-        KA["adapters/keydb"]
-        MCA["adapters/memcached"]
-        OA["adapters/olric"]
-        PA["adapters/pebble"]
-        SA["adapters/surrealdb"]
-    end
-
-    subgraph CART["Carts  (carts/*)"]
-        RC["carts/redis\nRedis client + distributed lock"]
-        VC["carts/valkey\nValkey client"]
-        MC["carts/memcached\nMemcached client"]
-        OC["carts/olric\nOlric distributed store"]
-        PC["carts/pebble\nPebble embedded KV"]
-        SC["carts/surrealdb\nSurrealDB client"]
-    end
-
-    subgraph CFG["Config"]
-        CF["config.Config\n(per-backend structs + env loading)"]
-    end
-
-    CL -->|implements| CP
-    TC -->|wraps| CP
-    RA -->|implements| CP
-    VA -->|implements| CP
-    MA -->|implements| CP
-    DA -->|implements| CP
-    KA -->|implements| CP
-    MCA -->|implements| CP
-    OA -->|implements| CP
-    PA -->|implements| CP
-    SA -->|implements| CP
-    RA --> RC
-    VA --> VC
-    DA --> RC
-    KA --> RC
-    MCA --> MC
-    OA --> OC
-    PA --> PC
-    SA --> SC
-    CL --> CF
-    REG -.->|"_ import triggers\ninit() registration"| RA
-    REG -.-> VA
-    REG -.-> MA
-    REG -.-> DA
-    REG -.-> KA
-    REG -.-> MCA
-    REG -.-> OA
-    REG -.-> PA
-    REG -.-> SA
+    redis --> carts/redis
+    valkey --> carts/valkey
+    dragonfly --> carts/redis
+    keydb --> carts/redis
+    memcached --> carts/memcached
+    olric --> carts/olric
+    pebble --> carts/pebble
+    surrealdb --> carts/surrealdb
 ```
 
 ### Key Design Principles
